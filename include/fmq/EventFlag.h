@@ -21,6 +21,8 @@
 #include <utils/Errors.h>
 #include <atomic>
 
+#include <fmq\fmq_export.h>
+
 namespace android {
 namespace hardware {
 
@@ -29,7 +31,7 @@ namespace hardware {
  * conditions like full, empty, data available etc. The same EventFlag object
  * can be used with multiple FMQs.
  */
-struct EventFlag {
+struct FMQ_EXPORT EventFlag {
     /**
      * Create an event flag object from the address of the flag word.
      *

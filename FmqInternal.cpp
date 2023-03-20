@@ -17,6 +17,7 @@
 #define LOG_TAG "FMQ"
 #include <android-base/logging.h>
 #include <utils/Log.h>
+#include <fmq\MQDescriptorBase.h>
 
 namespace android {
 namespace hardware {

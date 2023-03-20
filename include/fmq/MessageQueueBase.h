@@ -19,16 +19,41 @@
 #include <android-base/unique_fd.h>
 #include <cutils/ashmem.h>
 #include <fmq/EventFlag.h>
-#include <sys/mman.h>
-#include <sys/user.h>
 #include <utils/Log.h>
 #include <utils/SystemClock.h>
 #include <atomic>
 #include <new>
+#include <fmq/MQDescriptorBase.h>
+
+#include <fmq\system_porting.h>
 
 using android::hardware::kSynchronizedReadWrite;
 using android::hardware::kUnsynchronizedWrite;
 using android::hardware::MQFlavor;
+
+#ifndef PAGE_SIZE
+#define PAGE_SIZE 4096
+#endif
+
+#ifndef MAP_FAILED
+#define MAP_FAILED (void*)(-1)
+#endif
+
+#ifndef PROT_READ
+#define PROT_READ     0x1
+#endif
+
+#ifndef PROT_WRITE
+#define PROT_WRITE    0x2
+#endif
+
+#ifndef PROT_EXEC
+#define PROT_EXEC     0x0
+#endif
+
+#ifndef MAP_SHARED
+#define MAP_SHARED    0x01
+#endif
 
 namespace android {
 
@@ -872,7 +897,7 @@ bool MessageQueueBase<MQDescriptorType, T, flavor>::writeBlocking(
         status_t status = evFlag->wait(readNotification, &efState, timeOutNanos,
                                        true /* retry on spurious wake */);
 
-        if (status != android::TIMED_OUT && status != android::NO_ERROR) {
+        if (status != android::TIMED_OUT && status != android::ANDROID_NO_ERROR ) {
             hardware::details::logError("Unexpected error code from EventFlag Wait status " +
                                         std::to_string(status));
             break;
@@ -989,7 +1014,7 @@ bool MessageQueueBase<MQDescriptorType, T, flavor>::readBlocking(
         status_t status = evFlag->wait(writeNotification, &efState, timeOutNanos,
                                        true /* retry on spurious wake */);
 
-        if (status != android::TIMED_OUT && status != android::NO_ERROR) {
+        if (status != android::TIMED_OUT && status != android::ANDROID_NO_ERROR ) {
             hardware::details::logError("Unexpected error code from EventFlag Wait status " +
                                         std::to_string(status));
             break;
@@ -1091,7 +1116,7 @@ template <template <typename, MQFlavor> typename MQDescriptorType, typename T, M
  * Disable integer sanitization since integer overflow here is allowed
  * and legal.
  */
-__attribute__((no_sanitize("integer"))) bool
+/*__attribute__((no_sanitize("integer")))*/ bool
 MessageQueueBase<MQDescriptorType, T, flavor>::commitWrite(size_t nMessages) {
     size_t nBytesWritten = nMessages * sizeof(T);
     auto writePtr = mWritePtr->load(std::memory_order_relaxed);
@@ -1126,7 +1151,7 @@ template <template <typename, MQFlavor> typename MQDescriptorType, typename T, M
  * Disable integer sanitization since integer overflow here is allowed
  * and legal.
  */
-__attribute__((no_sanitize("integer"))) bool
+/*__attribute__((no_sanitize("integer")))*/ bool
 MessageQueueBase<MQDescriptorType, T, flavor>::beginRead(size_t nMessages,
                                                          MemTransaction* result) const {
     *result = MemTransaction();
@@ -1196,7 +1221,7 @@ template <template <typename, MQFlavor> typename MQDescriptorType, typename T, M
  * Disable integer sanitization since integer overflow here is allowed
  * and legal.
  */
-__attribute__((no_sanitize("integer"))) bool
+/*__attribute__((no_sanitize("integer")))*/ bool
 MessageQueueBase<MQDescriptorType, T, flavor>::commitRead(size_t nMessages) {
     // TODO: Use a local copy of readPtr to avoid relazed mReadPtr loads.
     auto readPtr = mReadPtr->load(std::memory_order_relaxed);
@@ -1253,7 +1278,7 @@ void* MessageQueueBase<MQDescriptorType, T, flavor>::mapGrantorDescr(uint32_t gr
     int mapOffset = (grantors[grantorIdx].offset / PAGE_SIZE) * PAGE_SIZE;
     int mapLength = grantors[grantorIdx].offset - mapOffset + grantors[grantorIdx].extent;
 
-    void* address = mmap(0, mapLength, PROT_READ | PROT_WRITE, MAP_SHARED, handle->data[fdIndex],
+    void* address = system_porting::system_porting_mmap(0, mapLength, PROT_READ | PROT_WRITE, MAP_SHARED, handle->data[fdIndex],
                          mapOffset);
     if (address == MAP_FAILED) {
         hardware::details::logError(std::string("mmap failed: ") + std::to_string(errno));
@@ -1274,7 +1299,7 @@ void MessageQueueBase<MQDescriptorType, T, flavor>::unmapGrantorDescr(void* addr
     int mapLength = grantors[grantorIdx].offset - mapOffset + grantors[grantorIdx].extent;
     void* baseAddress =
             reinterpret_cast<uint8_t*>(address) - (grantors[grantorIdx].offset - mapOffset);
-    if (baseAddress) munmap(baseAddress, mapLength);
+    if (baseAddress) system_porting::system_porting_munmap(baseAddress, mapLength);
 }
 
 }  // namespace hardware

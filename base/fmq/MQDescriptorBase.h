@@ -19,6 +19,8 @@
 #include <assert.h>
 #include <string>
 
+#include <fmq\fmq_export.h>
+
 namespace android {
 namespace hardware {
 
@@ -38,10 +40,10 @@ enum MQFlavor : uint32_t {
 };
 
 struct GrantorDescriptor {
-    uint32_t flags __attribute__((aligned(4)));
-    uint32_t fdIndex __attribute__((aligned(4)));
-    uint32_t offset __attribute__((aligned(4)));
-    uint64_t extent __attribute__((aligned(8)));
+    uint32_t flags /*__attribute__((aligned(4)))*/;
+    uint32_t fdIndex /*__attribute__((aligned(4)))*/;
+    uint32_t offset /*__attribute__((aligned(4)))*/;
+    uint64_t extent /*__attribute__((aligned(8)))*/;
 };
 
 static_assert(offsetof(GrantorDescriptor, flags) == 0, "wrong offset");
@@ -53,9 +55,9 @@ static_assert(__alignof(GrantorDescriptor) == 8, "wrong alignment");
 
 namespace details {
 
-void logError(const std::string& message);
-void errorWriteLog(int tag, const char* message);
-void check(bool exp, const char* message);
+FMQ_EXPORT void logError(const std::string& message);
+FMQ_EXPORT void errorWriteLog(int tag, const char* message);
+FMQ_EXPORT void check(bool exp, const char* message);
 
 typedef uint64_t RingBufferPosition;
 enum GrantorType : int { READPTRPOS = 0, WRITEPTRPOS, DATAPTRPOS, EVFLAGWORDPOS };

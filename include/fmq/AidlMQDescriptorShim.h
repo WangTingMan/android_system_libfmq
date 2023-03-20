@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+#ifndef _CRT_NONSTDC_NO_WARNINGS
+#define _CRT_NONSTDC_NO_WARNINGS
+#endif
+
 #include <aidl/android/hardware/common/fmq/MQDescriptor.h>
 #include <cutils/native_handle.h>
 #include <fmq/MQDescriptorBase.h>

@@ -13,17 +13,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#define _CRT_SECURE_NO_WARNINGS
 
 #define LOG_TAG "FMQ_EventFlags"
 
+#include <string.h> 
+
+#ifdef _MSC_VER
+#include <windows.h>
+#else
 #include <linux/futex.h>
-#include <string.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#endif
+
+#include <android-base\chrono_utils.h>
 
 #include <limits>
 #include <new>
+#include <chrono>
 
 #include <fmq/EventFlag.h>
 #include <utils/Log.h>
@@ -86,7 +95,12 @@ status_t EventFlag::wake(uint32_t bitmask) {
      */
     constexpr size_t kIntMax = std::numeric_limits<int>::max();
     if ((~old & bitmask) != 0) {
+#ifdef _MSC_VER
+        int ret = 0;
+        ALOGE( "FAKE INVOKE in WINDOWS!" );
+#else
         int ret = syscall(__NR_futex, mEfWordPtr, FUTEX_WAKE_BITSET, kIntMax, NULL, NULL, bitmask);
+#endif
         if (ret == -1) {
             status = -errno;
             ALOGE("Error in event flag wake attempt: %s\n", strerror(errno));
@@ -130,11 +144,20 @@ status_t EventFlag::waitHelper(uint32_t bitmask, uint32_t* efState, int64_t time
     if (timeoutNanoSeconds) {
         struct timespec waitTimeAbsolute;
         addNanosecondsToCurrentTime(timeoutNanoSeconds, &waitTimeAbsolute);
-
+#ifdef _MSC_VER
+        ret = 0;
+        ALOGE( "FAKE INVOKE in WINDOWS!" );
+#else
         ret = syscall(__NR_futex, mEfWordPtr, FUTEX_WAIT_BITSET,
                       efWord, &waitTimeAbsolute, NULL, bitmask);
+#endif
     } else {
+#ifdef _MSC_VER  
+        ret = 0;
+        ALOGE( "FAKE INVOKE in WINDOWS!" );
+#else
         ret = syscall(__NR_futex, mEfWordPtr, FUTEX_WAIT_BITSET, efWord, NULL, NULL, bitmask);
+#endif
     }
     if (ret == -1) {
         status = -errno;
@@ -198,7 +221,12 @@ status_t EventFlag::unmapEventFlagWord(std::atomic<uint32_t>* efWordPtr,
                                        bool* efWordNeedsUnmapping) {
     status_t status = NO_ERROR;
     if (*efWordNeedsUnmapping) {
+#ifdef _MSC_VER
+        int ret = 0;
+        ALOGE( "FAKE INVOKE in WINDOWS!" );
+#else
         int ret = munmap(efWordPtr, sizeof(std::atomic<uint32_t>));
+#endif
         if (ret != 0) {
             status = -errno;
             ALOGE("Error in deleting event flag group: %s\n", strerror(errno));
@@ -224,7 +252,13 @@ status_t EventFlag::deleteEventFlag(EventFlag** evFlag) {
 void EventFlag::addNanosecondsToCurrentTime(int64_t nanoSeconds, struct timespec* waitTime) {
     static constexpr int64_t kNanosPerSecond = 1000000000;
 
+#ifdef _MSC_VER
+    int64_t cnt = GetTickCount64();
+    waitTime->tv_sec = cnt / 1000;
+    waitTime->tv_nsec = ( cnt - waitTime->tv_sec * 1000 ) * 1000000;
+#else
     clock_gettime(CLOCK_MONOTONIC, waitTime);
+#endif
     waitTime->tv_sec += nanoSeconds / kNanosPerSecond;
     waitTime->tv_nsec += nanoSeconds % kNanosPerSecond;
 
