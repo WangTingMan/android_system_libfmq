@@ -24,6 +24,10 @@
 #include <limits>
 #include <type_traits>
 
+#ifdef _MSC_VER
+#include <corecrt_io.h>
+#endif
+
 namespace android {
 namespace details {
 
