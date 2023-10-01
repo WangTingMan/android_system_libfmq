@@ -634,8 +634,11 @@ void MessageQueueBase<MQDescriptorType, T, flavor>::initMemory(bool resetPointer
     hardware::details::check(mWritePtr != nullptr, "mWritePtr is null");
 
     if (resetPointers) {
+#ifdef _MSC_VER
+#else
         mReadPtr->store(0, std::memory_order_release);
         mWritePtr->store(0, std::memory_order_release);
+#endif
     } else if (flavor != kSynchronizedReadWrite) {
         // Always reset the read pointer.
         mReadPtr->store(0, std::memory_order_release);

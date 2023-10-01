@@ -1,6 +1,7 @@
 #include <fmq\system_porting.h>
 
 #include <windows.h>
+#include <log/log.h>
 
 #ifndef HAVE_MMAP   /* not true for MSVC, but may be true for msys */
 #define MAP_FAILED  0
@@ -32,7 +33,8 @@ void* system_porting_mmap( void* addr, size_t length, int prot, int flags,
     }
     else
     {
-        return NULL;
+        ALOGE( "Not porting!" );
+        return (void*)(1);
     }
 }
 
