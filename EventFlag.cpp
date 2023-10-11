@@ -21,6 +21,7 @@
 
 #ifdef _MSC_VER
 #include <windows.h>
+#include <fmq/system_porting.h>
 #else
 #include <linux/futex.h>
 #include <sys/mman.h>
@@ -152,7 +153,7 @@ status_t EventFlag::waitHelper(uint32_t bitmask, uint32_t* efState, int64_t time
                       efWord, &waitTimeAbsolute, NULL, bitmask);
 #endif
     } else {
-#ifdef _MSC_VER  
+#ifdef _MSC_VER
         ret = 0;
         ALOGE( "FAKE INVOKE in WINDOWS!" );
 #else
@@ -223,7 +224,7 @@ status_t EventFlag::unmapEventFlagWord(std::atomic<uint32_t>* efWordPtr,
     if (*efWordNeedsUnmapping) {
 #ifdef _MSC_VER
         int ret = 0;
-        ALOGE( "FAKE INVOKE in WINDOWS!" );
+        ret = system_porting::system_porting_munmap( efWordPtr, sizeof( std::atomic<uint32_t> ) );
 #else
         int ret = munmap(efWordPtr, sizeof(std::atomic<uint32_t>));
 #endif

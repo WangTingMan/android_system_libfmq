@@ -21,11 +21,14 @@
 #include <fmq/EventFlag.h>
 #include <utils/Log.h>
 #include <utils/SystemClock.h>
+#include <cutils/native_handle.h>
 #include <atomic>
 #include <new>
+#include <memory>
+#include <vector>
 #include <fmq/MQDescriptorBase.h>
 
-#include <fmq\system_porting.h>
+#include <fmq/system_porting.h>
 
 using android::hardware::kSynchronizedReadWrite;
 using android::hardware::kUnsynchronizedWrite;
@@ -48,7 +51,7 @@ using android::hardware::MQFlavor;
 #endif
 
 #ifndef PROT_EXEC
-#define PROT_EXEC     0x0
+#define PROT_EXEC     0x4
 #endif
 
 #ifndef MAP_SHARED
@@ -634,11 +637,8 @@ void MessageQueueBase<MQDescriptorType, T, flavor>::initMemory(bool resetPointer
     hardware::details::check(mWritePtr != nullptr, "mWritePtr is null");
 
     if (resetPointers) {
-#ifdef _MSC_VER
-#else
         mReadPtr->store(0, std::memory_order_release);
         mWritePtr->store(0, std::memory_order_release);
-#endif
     } else if (flavor != kSynchronizedReadWrite) {
         // Always reset the read pointer.
         mReadPtr->store(0, std::memory_order_release);
