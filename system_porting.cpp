@@ -1,13 +1,14 @@
 #include <fmq/system_porting.h>
 #include <fmq/MessageQueueBase.h>
 
+#include <base/strings/sys_string_conversions.h>
+
 #include <direct.h>
 #include <windows.h>
 #include <log/log.h>
+#include <json/json.h>
 
 #include <map>
-
-std::map<int, HANDLE> s_handle_map;
 
 #define ZCE_OS_WINDOWS 1
 
@@ -51,8 +52,6 @@ typedef HANDLE   ZCE_HANDLE;
 
 typedef unsigned int          mode_t;
 
-#define ZCE_POSIX_MMAP_DIRECTORY   "C:\\dev.shm\\"
-
 #ifndef PATH_MAX
 #define PATH_MAX 1024
 #endif
@@ -79,6 +78,17 @@ int system_porting_munmap( void* addr, size_t len )
 #endif
 }
 
+void* system_porting_open_shmem( std::string a_name, bool read_only )
+{
+    std::wstring name = base::SysNativeMBToWide( a_name );
+    DWORD access = FILE_MAP_READ | SECTION_QUERY;
+    if( !read_only )
+        access |= FILE_MAP_WRITE;
+    HANDLE handle = OpenFileMapping( access, false, name.empty() ? nullptr : name.c_str() );
+    DWORD error = GetLastError();
+    return handle;
+}
+
 /*!
 * @brief      将共享内存和文件进行映射
 * @return     void* 映射返回的地址，
@@ -95,14 +105,10 @@ void* system_porting_mmap( void* addr,
     size_t len,
     int prot,
     int flags,
-    int a_file_handle,
+    void* a_file_handle,
     long off )
 {
-    ZCE_HANDLE file_handle = INVALID_HANDLE_VALUE;
-    if( a_file_handle != 0 && a_file_handle != -1 )
-    {
-        file_handle = s_handle_map[a_file_handle];
-    }
+    ZCE_HANDLE file_handle = a_file_handle;
 
 #if defined (ZCE_OS_WINDOWS)
 
@@ -176,19 +182,31 @@ void* system_porting_mmap( void* addr,
     longlong_value.QuadPart = len;
 
     //file_handle == ZCE_INVALID_HANDLE后，创建的共享内存不在文件里面，而在系统映射文件中 system paging file
-    ZCE_HANDLE file_mapping = ::CreateFileMappingA( file_handle,
-        nullptr,
-        nt_flag_protect,
-        ( file_handle == ZCE_INVALID_HANDLE ) ? longlong_value.HighPart : 0,
-        ( file_handle == ZCE_INVALID_HANDLE ) ? longlong_value.LowPart : 0,
-        nullptr );
+    ZCE_HANDLE file_mapping = INVALID_HANDLE_VALUE;
+    if( file_handle == INVALID_HANDLE_VALUE )
+    {
+        file_mapping = ::CreateFileMappingA( file_handle,
+                              nullptr,
+                              nt_flag_protect,
+                              ( file_handle == ZCE_INVALID_HANDLE ) ? longlong_value.HighPart : 0,
+                              ( file_handle == ZCE_INVALID_HANDLE ) ? longlong_value.LowPart : 0,
+                              nullptr );
+    }
+    else
+    {
+        HANDLE duped_handle;
+        HANDLE process = GetCurrentProcess();
+        BOOL success = ::DuplicateHandle( process, file_handle, process, &duped_handle, 0,
+                                          FALSE, DUPLICATE_SAME_ACCESS );
+
+        file_mapping = duped_handle;
+    }
 
     if( file_mapping == 0 )
     {
         return MAP_FAILED;
     }
 
-    //
     longlong_value.QuadPart = off;
     void* addr_mapping = ::MapViewOfFileEx( file_mapping,
         nt_flags,
@@ -197,11 +215,20 @@ void* system_porting_mmap( void* addr,
         len,
         addr );
 
-    // Only close this down if we used the temporary.
-    ::CloseHandle( file_mapping );
-
     if( addr_mapping == 0 )
     {
+        auto error = GetLastError();
+        ALOGE( "Mapping failed with error code: ", error );
+        if( error == ERROR_MAPPED_ALIGNMENT )
+        {
+            SYSTEM_INFO sinf;
+            GetSystemInfo( &sinf );
+            DWORD dwBytesInBlock = sinf.dwAllocationGranularity;
+            /**
+             * off的值必须是dwAllocationGranularity的整数倍
+             */
+            ALOGE(" off = %d, not aligned to %d.", off, dwBytesInBlock );
+        }
         return MAP_FAILED;
     }
     else
@@ -230,6 +257,142 @@ int system_porting_shm_mkdir( const char* pathname, mode_t mode )
 #elif defined (ZCE_OS_LINUX)
     return ::mkdir( pathname, mode );
 #endif
+}
+
+#define GrantorDescriptor_element_flags_key "GrantorDescriptor_flags_key"
+#define GrantorDescriptor_element_fdIndex_key "GrantorDescriptor_fdIndex_key"
+#define GrantorDescriptor_element_offset_key "GrantorDescriptor_offset_key"
+#define GrantorDescriptor_element_extent_key "GrantorDescriptor_extent_key"
+#define GrantorDescriptor_size_key "GrantorDescriptor_size_key"
+#define GrantorDescriptor_key "GrantorDescriptor_key"
+
+#define quantum_key "quantum_key"
+#define flags_key "flags_key"
+#define name_key "name_key"
+
+#define native_handle_t_numFds_key "numFds_key"
+#define native_handle_t_numInts_key "numInts_key"
+
+std::string generate_string
+    (
+    ::android::hardware::hidl_vec<::android::hardware::GrantorDescriptor> const& a_grantors,
+    ::android::hardware::details::hidl_pointer<native_handle_t> const& a_handles,
+    uint32_t a_quantum,
+    uint32_t a_flags,
+    std::string a_name
+    )
+{
+    std::string json_str;
+    try
+    {
+        Json::Value value;
+        Json::StreamWriterBuilder builder;
+        builder["indentation"] = " ";
+
+        Json::Value array_value;
+        for( int i = 0; i < a_grantors.size(); ++i )
+        {
+            value.clear();
+            value[GrantorDescriptor_element_flags_key] = a_grantors[i].flags;
+            value[GrantorDescriptor_element_fdIndex_key] = a_grantors[i].fdIndex;
+            value[GrantorDescriptor_element_offset_key] = a_grantors[i].offset;
+            value[GrantorDescriptor_element_extent_key] = a_grantors[i].extent;
+            array_value[i] = value;
+        }
+
+        value.clear();
+        value[GrantorDescriptor_size_key] = a_grantors.size();
+        value[GrantorDescriptor_key] = array_value;
+        value[quantum_key] = Json::Value( uint32_t( a_quantum ) );
+        value[flags_key] = Json::Value( uint32_t( a_flags ) );
+
+        if( a_handles )
+        {
+            value[native_handle_t_numFds_key] = Json::Value( uint32_t( a_handles->numFds ) );
+            value[native_handle_t_numInts_key] = Json::Value( uint32_t( a_handles->numInts ) );
+        }
+        else
+        {
+            value[native_handle_t_numFds_key] = Json::Value( uint32_t( 0 ) );
+            value[native_handle_t_numInts_key] = Json::Value( uint32_t( 0 ) );
+        }
+
+        value[name_key] = a_name;
+        json_str = Json::writeString( builder, value );
+    }
+    catch( const std::exception& e)
+    {
+        ALOGE( "exception caught: %s", e.what() );
+    }
+    return json_str;
+}
+
+void from_string
+    (
+    std::string const& a_string,
+    ::android::hardware::hidl_vec<::android::hardware::GrantorDescriptor>& a_grantors,
+    ::android::hardware::details::hidl_pointer<native_handle_t>& a_handles,
+    uint32_t& a_quantum,
+    uint32_t& a_flags,
+    std::string& a_name
+    )
+{
+    bool ret = false;
+    Json::Reader reader;
+    Json::Value raw_value;
+    int numFds = 0;
+    int numInts = 0;
+    try
+    {
+        ret = reader.parse( a_string, raw_value, false );
+        if( !ret )
+        {
+            ALOGE( "Cannot parse from string: %s", a_string.c_str() );
+            return;
+        }
+
+        Json::Value& value = raw_value[GrantorDescriptor_key];
+        if( !value.isArray() && !value.isNull() )
+        {
+            ALOGE( "Wrong string: %s", a_string.c_str() );
+            return;
+        }
+
+        uint32_t size = value.size();
+        a_grantors.resize( size );
+        for( int i = 0; i < size; ++i )
+        {
+            Json::Value& array_element = value[i];
+            a_grantors[i].extent = array_element[GrantorDescriptor_element_extent_key].asUInt64();
+            a_grantors[i].fdIndex = array_element[GrantorDescriptor_element_fdIndex_key].asUInt();
+            a_grantors[i].offset = array_element[GrantorDescriptor_element_offset_key].asUInt();
+            a_grantors[i].flags = array_element[GrantorDescriptor_element_flags_key].asUInt();
+        }
+
+        value = raw_value[quantum_key];
+        a_quantum = value.asUInt();
+        value = raw_value[flags_key];
+        a_flags = value.asUInt();
+
+        value = raw_value[native_handle_t_numFds_key];
+        numFds = value.asUInt();
+        value = raw_value[native_handle_t_numInts_key];
+        numInts = value.asUInt();
+
+        value = raw_value[name_key];
+        a_name.clear();
+        if( !value.isNull() )
+        {
+            a_name.assign( value.asString() );
+        }
+    }
+    catch( const std::exception& e )
+    {
+        ALOGE( "exception caught when parse json string: %s", e.what() );
+    }
+
+    native_handle_t* handle = native_handle_create( numFds, numInts );
+    a_handles = handle;
 }
 
 }

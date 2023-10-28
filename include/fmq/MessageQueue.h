@@ -19,6 +19,10 @@
 #include <hidl/MQDescriptor.h>
 #include "MessageQueueBase.h"
 
+#ifdef _MSC_VER
+#include <string> // we need use named shared memory on windows.
+#endif
+
 namespace android {
 namespace hardware {
 
@@ -51,6 +55,12 @@ struct MessageQueue final : public MessageQueueBase<MQDescriptor, T, flavor> {
     MessageQueue(size_t numElementsInQueue, bool configureEventFlagWord = false)
         : MessageQueueBase<MQDescriptor, T, flavor>(numElementsInQueue, configureEventFlagWord,
                                                     android::base::unique_fd(), 0) {}
+
+#ifdef _MSC_VER
+    MessageQueue(size_t numElementsInQueue, std::string name = "", bool configureEventFlagWord = false)
+        : MessageQueueBase<MQDescriptor, T, flavor>(numElementsInQueue, configureEventFlagWord,
+                                                    android::base::unique_fd(), 0, name) {}
+#endif
 
   private:
     MessageQueue(const MessageQueue& other) = delete;

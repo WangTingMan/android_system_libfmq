@@ -35,7 +35,7 @@ using android::hardware::kUnsynchronizedWrite;
 using android::hardware::MQFlavor;
 
 #ifndef PAGE_SIZE
-#define PAGE_SIZE 4096
+#define PAGE_SIZE 0x00010000
 #endif
 
 #ifndef MAP_FAILED
@@ -87,9 +87,16 @@ struct MessageQueueBase {
      * size must be larger than or equal to (numElementsInQueue * sizeof(T)).
      * Otherwise, operations will cause out-of-bounds memory access.
      */
-
+#ifdef _MSC_VER
+     /**
+      * we just need a name to create one shared memory on windows.
+      */
+    MessageQueueBase( size_t numElementsInQueue, bool configureEventFlagWord,
+                      android::base::unique_fd bufferFd, size_t bufferSize, std::string name = "" );
+#else
     MessageQueueBase(size_t numElementsInQueue, bool configureEventFlagWord,
                      android::base::unique_fd bufferFd, size_t bufferSize);
+#endif
 
     MessageQueueBase(size_t numElementsInQueue, bool configureEventFlagWord = false)
         : MessageQueueBase(numElementsInQueue, configureEventFlagWord, android::base::unique_fd(),
@@ -663,6 +670,12 @@ MessageQueueBase<MQDescriptorType, T, flavor>::MessageQueueBase(const Descriptor
         return;
     }
 
+#ifdef _MSC_VER
+    void* win_handle = system_porting::system_porting_open_shmem( mDesc->getName(), false );
+    native_handle_t* handle_mod = mDesc->handle();
+    handle_mod->data[0] = win_handle;
+#endif
+
     initMemory(resetPointers);
 }
 
@@ -670,7 +683,12 @@ template <template <typename, MQFlavor> typename MQDescriptorType, typename T, M
 MessageQueueBase<MQDescriptorType, T, flavor>::MessageQueueBase(size_t numElementsInQueue,
                                                                 bool configureEventFlagWord,
                                                                 android::base::unique_fd bufferFd,
+#ifdef _MSC_VER
+                                                                size_t bufferSize,
+                                                                std::string name) {
+#else
                                                                 size_t bufferSize) {
+#endif
     // Check if the buffer size would not overflow size_t
     if (numElementsInQueue > SIZE_MAX / sizeof(T)) {
         hardware::details::logError("Requested message queue size too large. Size of elements: " +
@@ -725,17 +743,29 @@ MessageQueueBase<MQDescriptorType, T, flavor>::MessageQueueBase(size_t numElemen
     /*
      * Create an ashmem region to map the memory.
      */
-    int ashmemFd = ashmem_create_region("MessageQueue", kAshmemSizePageAligned);
+#ifdef _MSC_VER
+    if( name.empty() )
+    {
+        name.assign( "MessageQueue" );
+    }
+    ASHMEM_HANDLE ashmemFd = ashmem_create_region( name.c_str(), kAshmemSizePageAligned );
+#else
+    ASHMEM_HANDLE ashmemFd = ashmem_create_region("MessageQueue", kAshmemSizePageAligned);
+#endif
     ashmem_set_prot_region(ashmemFd, PROT_READ | PROT_WRITE);
     mqHandle->data[0] = ashmemFd;
 
     if (bufferFd != -1) {
         // Use user-supplied file descriptor for fdIndex 1
+#ifdef _MSC_VER
+        hardware::details::logError( "Not support yet." );
+#else
         mqHandle->data[1] = bufferFd.get();
         // release ownership of fd. mqHandle owns it now.
         if (bufferFd.release() < 0) {
             hardware::details::logError("Error releasing supplied bufferFd");
         }
+#endif
 
         std::vector<android::hardware::GrantorDescriptor> grantors;
         grantors.resize(configureEventFlagWord ? hardware::details::kMinGrantorCountForEvFlagSupport
@@ -772,6 +802,9 @@ MessageQueueBase<MQDescriptorType, T, flavor>::MessageQueueBase(size_t numElemen
     } else {
         mDesc = std::unique_ptr<Descriptor>(new (std::nothrow) Descriptor(
                 kQueueSizeBytes, mqHandle, sizeof(T), configureEventFlagWord));
+#ifdef _MSC_VER
+        mDesc->setName( name );
+#endif
     }
     if (mDesc == nullptr) {
         native_handle_close(mqHandle);

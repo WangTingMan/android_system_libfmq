@@ -62,6 +62,30 @@ struct AidlMQDescriptorShim {
 
     ~AidlMQDescriptorShim();
 
+#ifdef _MSC_VER
+    std::string toString()const
+    {
+        std::string str;
+        str = ::system_porting::generate_string( mGrantors, mHandle, mQuantum, mFlags, mName );
+        return str;
+    }
+
+    void fromString( std::string const& a_decriptor_str )
+    {
+        ::system_porting::from_string( a_decriptor_str, mGrantors, mHandle, mQuantum, mFlags, mName );
+    }
+
+    void setName( std::string const& a_name )
+    {
+        mName = a_name;
+    }
+
+    std::string const& getName()const noexcept
+    {
+        return mName;
+    }
+#endif
+
     size_t getSize() const;
 
     size_t getQuantum() const;
@@ -87,6 +111,9 @@ struct AidlMQDescriptorShim {
     native_handle_t* mHandle = nullptr;
     uint32_t mQuantum = 0;
     uint32_t mFlags = 0;
+#ifdef _MSC_VER
+    std::string mName;
+#endif
 };
 
 template <typename T, MQFlavor flavor>
@@ -129,11 +156,13 @@ AidlMQDescriptorShim<T, flavor>::AidlMQDescriptorShim(
     }
     int data_index = 0;
     for (const auto& fd : desc.handle.fds) {
-        mHandle->data[data_index] = dup(fd.get());
+        //mHandle->data[data_index] = dup(fd.get());
+        std::abort();
         data_index++;
     }
     for (const auto& data_int : desc.handle.ints) {
-        mHandle->data[data_index] = data_int;
+        //mHandle->data[data_index] = data_int; 
+        std::abort();
         data_index++;
     }
 }
@@ -163,7 +192,8 @@ AidlMQDescriptorShim<T, flavor>& AidlMQDescriptorShim<T, flavor>::operator=(
         mHandle = native_handle_create(other.mHandle->numFds, other.mHandle->numInts);
 
         for (int i = 0; i < other.mHandle->numFds; ++i) {
-            mHandle->data[i] = dup(other.mHandle->data[i]);
+            std::abort();
+            //mHandle->data[i] = dup(other.mHandle->data[i]);
         }
 
         memcpy(&mHandle->data[other.mHandle->numFds], &other.mHandle->data[other.mHandle->numFds],
