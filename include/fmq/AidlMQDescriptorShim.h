@@ -122,6 +122,10 @@ AidlMQDescriptorShim<T, flavor>::AidlMQDescriptorShim(
                                                         SynchronizedReadWrite,
                                                         UnsynchronizedWrite>::type>& desc)
     : mQuantum(desc.quantum), mFlags(desc.flags) {
+#ifdef _MSC_VER
+    fromString( desc.json_decriptor );
+#endif
+
     if (desc.quantum < 0 || desc.flags < 0) {
         // MQDescriptor uses signed integers, but the values must be positive.
         hardware::details::logError("Invalid MQDescriptor. Values must be positive. quantum: " +
@@ -156,13 +160,20 @@ AidlMQDescriptorShim<T, flavor>::AidlMQDescriptorShim(
     }
     int data_index = 0;
     for (const auto& fd : desc.handle.fds) {
-        //mHandle->data[data_index] = dup(fd.get());
-        std::abort();
+#ifdef _MSC_VER
+        mHandle->data[0] = 0;
+        // We cannot transfer local handle to remote process on windows. So ignore this.
+#else
+        mHandle->data[data_index] = dup(fd.get());
+#endif
         data_index++;
     }
     for (const auto& data_int : desc.handle.ints) {
-        //mHandle->data[data_index] = data_int; 
-        std::abort();
+#ifdef _MSC_VER
+        mHandle->data[data_index] = 0;
+#else
+        mHandle->data[data_index] = data_int;
+#endif
         data_index++;
     }
 }
@@ -188,12 +199,19 @@ AidlMQDescriptorShim<T, flavor>& AidlMQDescriptorShim<T, flavor>::operator=(
     mQuantum = other.mQuantum;
     mFlags = other.mFlags;
 
+#ifdef _MSC_VER
+    mName = other.getName();
+#endif
+
     if (other.mHandle != nullptr) {
         mHandle = native_handle_create(other.mHandle->numFds, other.mHandle->numInts);
 
         for (int i = 0; i < other.mHandle->numFds; ++i) {
-            std::abort();
-            //mHandle->data[i] = dup(other.mHandle->data[i]);
+#ifdef _MSC_VER
+            mHandle->data[i] = other.mHandle->data[i];
+#else
+            mHandle->data[i] = dup(other.mHandle->data[i]);
+#endif
         }
 
         memcpy(&mHandle->data[other.mHandle->numFds], &other.mHandle->data[other.mHandle->numFds],

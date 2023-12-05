@@ -12,7 +12,7 @@
 #include <android/binder_stability.h>
 #endif  // BINDER_STABILITY_SUPPORT
 
-#include <fmq\fmq_export.h>
+#include <fmq/fmq_export.h>
 
 namespace aidl {
 namespace android {
@@ -23,11 +23,10 @@ public:
   typedef std::false_type fixed_size;
   static const char* descriptor;
 
+  NativeHandle() {}
+
   std::vector<::ndk::ScopedFileDescriptor> fds;
   std::vector<int32_t> ints;
-  NativeHandle(){}
-  NativeHandle(NativeHandle const&) = delete;
-  NativeHandle& operator=(NativeHandle const&) = delete;
 
   binder_status_t readFromParcel(const AParcel* parcel);
   binder_status_t writeToParcel(AParcel* parcel) const;

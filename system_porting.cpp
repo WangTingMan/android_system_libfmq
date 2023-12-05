@@ -123,6 +123,7 @@ void* system_porting_mmap( void* addr,
     // can not map to address 0
     if( ( flags & MAP_FIXED ) && 0 == addr )
     {
+        ALOGE( "Error, flags = %d. Should be 1?", flags );
         errno = ENOTSUP;
         return MAP_FAILED;
     }
@@ -325,6 +326,23 @@ std::string generate_string
         ALOGE( "exception caught: %s", e.what() );
     }
     return json_str;
+}
+
+void from_string
+    (
+    std::string const& a_string,
+    std::vector<::android::hardware::GrantorDescriptor>& a_grantors,
+    native_handle_t*& a_handles,
+    uint32_t& a_quantum,
+    uint32_t& a_flags,
+    std::string& a_name
+    )
+{
+    ::android::hardware::hidl_vec<::android::hardware::GrantorDescriptor> grantors;
+    ::android::hardware::details::hidl_pointer<native_handle_t> handle_;
+    from_string( a_string, grantors, handle_, a_quantum, a_flags, a_name );
+    a_grantors = static_cast<std::vector<::android::hardware::GrantorDescriptor>>( grantors );
+    a_handles = static_cast<native_handle_t*>( handle_ );
 }
 
 void from_string

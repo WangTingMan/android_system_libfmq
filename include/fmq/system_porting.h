@@ -38,5 +38,15 @@ FMQ_EXPORT void from_string
     std::string& a_name
     );
 
+FMQ_EXPORT void from_string
+    (
+    std::string const& a_string,
+    std::vector<::android::hardware::GrantorDescriptor>& a_grantors,
+    native_handle_t*& a_handles,
+    uint32_t& a_quantum,
+    uint32_t& a_flags,
+    std::string& a_name
+    );
+
 }
 

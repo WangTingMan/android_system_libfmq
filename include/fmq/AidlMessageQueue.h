@@ -104,6 +104,13 @@ struct AidlMessageQueue final
         : AidlMessageQueue(numElementsInQueue, configureEventFlagWord, android::base::unique_fd(),
                            0) {}
 
+#ifdef _MSC_VER
+    AidlMessageQueue( size_t numElementsInQueue, std::string name, bool configureEventFlagWord )
+        : MessageQueueBase<AidlMQDescriptorShim, T, FlavorTypeToValue<U>::value>
+            ( numElementsInQueue, configureEventFlagWord, android::base::unique_fd(),
+              0, name ){}
+#endif
+
     MQDescriptor<T, U> dupeDesc();
 
   private:
@@ -135,20 +142,47 @@ MQDescriptor<T, U> AidlMessageQueue<T, U>::dupeDesc() {
                     .extent = static_cast<int64_t>(grantor.extent)});
         }
         std::vector<ndk::ScopedFileDescriptor> fds;
+#ifdef _MSC_VER
+        std::vector<void*> ints;
+        std::string desc_json_ = shim->toString();
+#else
         std::vector<int> ints;
+#endif
         int data_index = 0;
         for (; data_index < shim->handle()->numFds; data_index++) {
+#ifdef _MSC_VER
+            auto hd = shim->handle()->data[data_index];
+            int fake_fd = reinterpret_cast<int>( hd );
+            /* Warning this handle just create local process. Other process cannot use this handle to do anything*/
+            fds.push_back( ndk::ScopedFileDescriptor( fake_fd ) );
+#else
             fds.push_back(ndk::ScopedFileDescriptor(dup(shim->handle()->data[data_index])));
+#endif
         }
         for (; data_index < shim->handle()->numFds + shim->handle()->numInts; data_index++) {
             ints.push_back(shim->handle()->data[data_index]);
         }
+
+#ifdef _MSC_VER
+        ::aidl::android::hardware::common::NativeHandle handle;
+        handle.fds = std::move( fds );
+        handle.ints.resize( ints.size() );
+
+        MQDescriptor<T, U> descriptor;
+        descriptor.grantors = grantors;
+        descriptor.handle = std::move( handle );
+        descriptor.quantum = static_cast<int32_t>( shim->getQuantum() );
+        descriptor.flags = static_cast<int32_t>( shim->getFlags() );
+        descriptor.json_decriptor = std::move( desc_json_ );
+        return descriptor;
+#else
         return MQDescriptor<T, U>{
                 .quantum = static_cast<int32_t>(shim->getQuantum()),
                 .grantors = grantors,
                 .flags = static_cast<int32_t>(shim->getFlags()),
                 .handle = {std::move(fds), std::move(ints)},
         };
+#endif
     } else {
         return MQDescriptor<T, U>();
     }

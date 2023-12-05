@@ -14,6 +14,12 @@
 #include <android/binder_stability.h>
 #endif  // BINDER_STABILITY_SUPPORT
 
+namespace aidl::android::hardware::common {
+class NativeHandle;
+}  // namespace aidl::android::hardware::common
+namespace aidl::android::hardware::common::fmq {
+class GrantorDescriptor;
+}  // namespace aidl::android::hardware::common::fmq
 namespace aidl {
 namespace android {
 namespace hardware {
@@ -22,11 +28,6 @@ namespace fmq {
 template <typename T, typename Flavor>
 class MQDescriptor {
 public:
-
-  MQDescriptor(){}
-
-  MQDescriptor(MQDescriptor const&)=delete;
-
   typedef std::false_type fixed_size;
   static const char* descriptor;
 
@@ -34,6 +35,10 @@ public:
   ::aidl::android::hardware::common::NativeHandle handle;
   int32_t quantum = 0;
   int32_t flags = 0;
+
+#ifdef _MSC_VER
+  std::string json_decriptor;
+#endif
 
   binder_status_t readFromParcel(const AParcel* parcel);
   binder_status_t writeToParcel(AParcel* parcel) const;
@@ -124,7 +129,12 @@ binder_status_t MQDescriptor<T, Flavor>::readFromParcel(const AParcel* _aidl_par
   _aidl_ret_status = ::ndk::AParcel_readData(_aidl_parcel, &flags);
   if (_aidl_ret_status != STATUS_OK) return _aidl_ret_status;
 
+#ifdef _MSC_VER
+  _aidl_ret_status = ::ndk::AParcel_readString( _aidl_parcel, &json_decriptor );
+#endif
+
   AParcel_setDataPosition(_aidl_parcel, _aidl_start_pos + _aidl_parcelable_size);
+
   return _aidl_ret_status;
 }
 template <typename T, typename Flavor>
@@ -146,10 +156,15 @@ binder_status_t MQDescriptor<T, Flavor>::writeToParcel(AParcel* _aidl_parcel) co
   _aidl_ret_status = ::ndk::AParcel_writeData(_aidl_parcel, flags);
   if (_aidl_ret_status != STATUS_OK) return _aidl_ret_status;
 
+#ifdef _MSC_VER
+  ::ndk::AParcel_writeString( _aidl_parcel, json_decriptor );
+#endif
+
   size_t _aidl_end_pos = AParcel_getDataPosition(_aidl_parcel);
   AParcel_setDataPosition(_aidl_parcel, _aidl_start_pos);
   AParcel_writeInt32(_aidl_parcel, _aidl_end_pos - _aidl_start_pos);
   AParcel_setDataPosition(_aidl_parcel, _aidl_end_pos);
+
   return _aidl_ret_status;
 }
 
@@ -158,4 +173,3 @@ binder_status_t MQDescriptor<T, Flavor>::writeToParcel(AParcel* _aidl_parcel) co
 }  // namespace hardware
 }  // namespace android
 }  // namespace aidl
-
