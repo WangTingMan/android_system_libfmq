@@ -48,5 +48,7 @@ FMQ_EXPORT void from_string
     std::string& a_name
     );
 
+FMQ_EXPORT std::string generate_random_name();
+
 }
 

@@ -746,7 +746,7 @@ MessageQueueBase<MQDescriptorType, T, flavor>::MessageQueueBase(size_t numElemen
 #ifdef _MSC_VER
     if( name.empty() )
     {
-        name.assign( "MessageQueue" );
+        name.assign(system_porting::generate_random_name());
     }
     ASHMEM_HANDLE ashmemFd = ashmem_create_region( name.c_str(), kAshmemSizePageAligned );
 #else

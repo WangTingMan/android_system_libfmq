@@ -37,7 +37,10 @@ public:
   int32_t flags = 0;
 
 #ifdef _MSC_VER
+  std::string name;
   std::string json_decriptor;
+  bool from_json_descriptor(std::string a_json_decriptor);
+  std::string to_json_string();
 #endif
 
   binder_status_t readFromParcel(const AParcel* parcel);
@@ -167,6 +170,44 @@ binder_status_t MQDescriptor<T, Flavor>::writeToParcel(AParcel* _aidl_parcel) co
 
   return _aidl_ret_status;
 }
+
+#ifdef _MSC_VER
+template <typename T, typename Flavor>
+bool MQDescriptor<T, Flavor>::from_json_descriptor(std::string a_json_decriptor)
+{
+    native_handle_t native_handle;
+    native_handle_t* p_native_handle = &native_handle;
+    std::vector<::android::hardware::GrantorDescriptor> grantor_desc;
+    uint32_t quantum_value = 0;
+    uint32_t flags_value = 0;
+    ::system_porting::from_string( a_json_decriptor, grantor_desc, p_native_handle,
+        quantum_value, flags_value, name);
+    grantors.clear();
+    for (auto& ele : grantor_desc)
+    {
+        ::aidl::android::hardware::common::fmq::GrantorDescriptor local_use_grantor;
+        local_use_grantor.extent = ele.extent;
+        local_use_grantor.fdIndex = ele.fdIndex;
+        local_use_grantor.offset = ele.offset;
+        grantors.push_back(local_use_grantor);
+    }
+    json_decriptor = a_json_decriptor;
+    return true;
+}
+
+template <typename T, typename Flavor>
+std::string MQDescriptor<T, Flavor>::to_json_string()
+{
+    if (!json_decriptor.empty())
+    {
+        return json_decriptor;
+    }
+
+    std::string str;
+    //str = ::system_porting::generate_string(grantors, handle, quantum, flags, name);
+    return str;
+}
+#endif
 
 }  // namespace fmq
 }  // namespace common

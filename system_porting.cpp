@@ -1,6 +1,7 @@
 #include <fmq/system_porting.h>
 #include <fmq/MessageQueueBase.h>
 
+#include <base/rand_util.h>
 #include <base/strings/sys_string_conversions.h>
 
 #include <direct.h>
@@ -411,6 +412,14 @@ void from_string
 
     native_handle_t* handle = native_handle_create( numFds, numInts );
     a_handles = handle;
+}
+
+std::string generate_random_name()
+{
+    std::string name{"random_message_queue_name_"};
+    int rand = base::RandInt(0, 10000);
+    //name.append(std::to_string(rand));
+    return name;
 }
 
 }
