@@ -45,6 +45,7 @@ struct GrantorDescriptor {
     uint32_t offset /*__attribute__((aligned(4)))*/;
     uint64_t extent /*__attribute__((aligned(8)))*/;
 };
+#define GRANTOR_DESCRIPTOR_DEFINED
 
 static_assert(offsetof(GrantorDescriptor, flags) == 0, "wrong offset");
 static_assert(offsetof(GrantorDescriptor, fdIndex) == 4, "wrong offset");

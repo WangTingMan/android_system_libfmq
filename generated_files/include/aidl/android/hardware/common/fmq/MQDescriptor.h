@@ -175,6 +175,7 @@ binder_status_t MQDescriptor<T, Flavor>::writeToParcel(AParcel* _aidl_parcel) co
 template <typename T, typename Flavor>
 bool MQDescriptor<T, Flavor>::from_json_descriptor(std::string a_json_decriptor)
 {
+#if defined( NATIVE_HANDLE_H_ ) && defined( GRANTOR_DESCRIPTOR_DEFINED )
     native_handle_t native_handle;
     native_handle_t* p_native_handle = &native_handle;
     std::vector<::android::hardware::GrantorDescriptor> grantor_desc;
@@ -191,6 +192,7 @@ bool MQDescriptor<T, Flavor>::from_json_descriptor(std::string a_json_decriptor)
         local_use_grantor.offset = ele.offset;
         grantors.push_back(local_use_grantor);
     }
+#endif
     json_decriptor = a_json_decriptor;
     return true;
 }
