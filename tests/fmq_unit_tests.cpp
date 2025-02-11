@@ -17,6 +17,7 @@
 #include <android-base/logging.h>
 #include <asm-generic/mman.h>
 #include <fmq/AidlMessageQueue.h>
+#include <fmq/AidlMessageQueueCpp.h>
 #include <fmq/ConvertMQDescriptors.h>
 #include <fmq/EventFlag.h>
 #include <fmq/MessageQueue.h>
@@ -25,36 +26,54 @@
 #include <sys/resource.h>
 #include <atomic>
 #include <cstdlib>
+#include <filesystem>
 #include <sstream>
 #include <thread>
 
 using aidl::android::hardware::common::fmq::SynchronizedReadWrite;
 using aidl::android::hardware::common::fmq::UnsynchronizedWrite;
+using cppSynchronizedReadWrite = android::hardware::common::fmq::SynchronizedReadWrite;
+using cppUnSynchronizedWrite = android::hardware::common::fmq::UnsynchronizedWrite;
+
 using android::hardware::kSynchronizedReadWrite;
 using android::hardware::kUnsynchronizedWrite;
 
 enum EventFlagBits : uint32_t {
-    kFmqNotEmpty = 1 << 0,
-    kFmqNotFull = 1 << 1,
+    kFmqNotFull = 1 << 0,
+    kFmqNotEmpty = 1 << 1,
 };
 
 typedef android::AidlMessageQueue<uint8_t, SynchronizedReadWrite> AidlMessageQueueSync;
 typedef android::AidlMessageQueue<uint8_t, UnsynchronizedWrite> AidlMessageQueueUnsync;
+typedef android::AidlMessageQueueCpp<uint8_t, cppSynchronizedReadWrite> cppAidlMessageQueueSync;
+typedef android::AidlMessageQueueCpp<uint8_t, cppUnSynchronizedWrite> cppAidlMessageQueueUnsync;
 typedef android::hardware::MessageQueue<uint8_t, kSynchronizedReadWrite> MessageQueueSync;
 typedef android::hardware::MessageQueue<uint8_t, kUnsynchronizedWrite> MessageQueueUnsync;
+
 typedef android::AidlMessageQueue<uint16_t, SynchronizedReadWrite> AidlMessageQueueSync16;
+typedef android::AidlMessageQueueCpp<uint16_t, cppSynchronizedReadWrite> cppAidlMessageQueueSync16;
 typedef android::hardware::MessageQueue<uint16_t, kSynchronizedReadWrite> MessageQueueSync16;
+typedef android::AidlMessageQueue<uint16_t, UnsynchronizedWrite> AidlMessageQueueUnsync16;
+typedef android::AidlMessageQueueCpp<uint16_t, cppUnSynchronizedWrite> cppAidlMessageQueueUnsync16;
+typedef android::hardware::MessageQueue<uint16_t, kUnsynchronizedWrite> MessageQueueUnsync16;
 
 typedef android::hardware::MessageQueue<uint8_t, kSynchronizedReadWrite> MessageQueueSync8;
 typedef android::hardware::MQDescriptor<uint8_t, kSynchronizedReadWrite> HidlMQDescSync8;
 typedef android::AidlMessageQueue<int8_t, SynchronizedReadWrite> AidlMessageQueueSync8;
 typedef aidl::android::hardware::common::fmq::MQDescriptor<int8_t, SynchronizedReadWrite>
         AidlMQDescSync8;
+typedef android::AidlMessageQueueCpp<int8_t, cppSynchronizedReadWrite> cppAidlMessageQueueSync8;
+typedef android::hardware::common::fmq::MQDescriptor<int8_t, cppSynchronizedReadWrite>
+        cppAidlMQDescSync8;
+
 typedef android::hardware::MessageQueue<uint8_t, kUnsynchronizedWrite> MessageQueueUnsync8;
 typedef android::hardware::MQDescriptor<uint8_t, kUnsynchronizedWrite> HidlMQDescUnsync8;
 typedef android::AidlMessageQueue<int8_t, UnsynchronizedWrite> AidlMessageQueueUnsync8;
 typedef aidl::android::hardware::common::fmq::MQDescriptor<int8_t, UnsynchronizedWrite>
         AidlMQDescUnsync8;
+typedef android::AidlMessageQueueCpp<int8_t, cppUnSynchronizedWrite> cppAidlMessageQueueUnsync8;
+typedef android::hardware::common::fmq::MQDescriptor<int8_t, cppUnSynchronizedWrite>
+        cppAidlMQDescUnsync8;
 
 enum class SetupType {
     SINGLE_FD,
@@ -70,18 +89,31 @@ class TestParamTypes {
 
 // Run everything on both the AIDL and HIDL versions with one and two FDs
 typedef ::testing::Types<TestParamTypes<AidlMessageQueueSync, SetupType::SINGLE_FD>,
+                         TestParamTypes<cppAidlMessageQueueSync, SetupType::SINGLE_FD>,
                          TestParamTypes<MessageQueueSync, SetupType::SINGLE_FD>,
                          TestParamTypes<AidlMessageQueueSync, SetupType::DOUBLE_FD>,
+                         TestParamTypes<cppAidlMessageQueueSync, SetupType::DOUBLE_FD>,
                          TestParamTypes<MessageQueueSync, SetupType::DOUBLE_FD>>
         SyncTypes;
 typedef ::testing::Types<TestParamTypes<AidlMessageQueueUnsync, SetupType::SINGLE_FD>,
+                         TestParamTypes<cppAidlMessageQueueUnsync, SetupType::SINGLE_FD>,
                          TestParamTypes<MessageQueueUnsync, SetupType::SINGLE_FD>,
                          TestParamTypes<AidlMessageQueueUnsync, SetupType::DOUBLE_FD>,
+                         TestParamTypes<cppAidlMessageQueueUnsync, SetupType::DOUBLE_FD>,
                          TestParamTypes<MessageQueueUnsync, SetupType::DOUBLE_FD>>
         UnsyncTypes;
+typedef ::testing::Types<TestParamTypes<AidlMessageQueueUnsync16, SetupType::SINGLE_FD>,
+                         TestParamTypes<cppAidlMessageQueueUnsync16, SetupType::SINGLE_FD>,
+                         TestParamTypes<MessageQueueUnsync16, SetupType::SINGLE_FD>,
+                         TestParamTypes<AidlMessageQueueUnsync16, SetupType::DOUBLE_FD>,
+                         TestParamTypes<cppAidlMessageQueueUnsync16, SetupType::DOUBLE_FD>,
+                         TestParamTypes<MessageQueueUnsync16, SetupType::DOUBLE_FD>>
+        TwoByteUnsyncTypes;
 typedef ::testing::Types<TestParamTypes<AidlMessageQueueSync16, SetupType::SINGLE_FD>,
+                         TestParamTypes<cppAidlMessageQueueSync16, SetupType::SINGLE_FD>,
                          TestParamTypes<MessageQueueSync16, SetupType::SINGLE_FD>,
                          TestParamTypes<AidlMessageQueueSync16, SetupType::DOUBLE_FD>,
+                         TestParamTypes<cppAidlMessageQueueSync16, SetupType::DOUBLE_FD>,
                          TestParamTypes<MessageQueueSync16, SetupType::DOUBLE_FD>>
         BadConfigTypes;
 
@@ -123,10 +155,10 @@ class SynchronizedReadWrites : public TestBase<T> {
     size_t mNumMessagesMax = 0;
 };
 
-TYPED_TEST_CASE(UnsynchronizedWriteTest, UnsyncTypes);
+TYPED_TEST_CASE(UnsynchronizedReadWriteTest, UnsyncTypes);
 
 template <typename T>
-class UnsynchronizedWriteTest : public TestBase<T> {
+class UnsynchronizedReadWriteTest : public TestBase<T> {
   protected:
     virtual void TearDown() {
         delete mQueue;
@@ -226,17 +258,77 @@ class QueueSizeOdd : public TestBase<T> {
 
 TYPED_TEST_CASE(BadQueueConfig, BadConfigTypes);
 
+TYPED_TEST_CASE(UnsynchronizedOverflowHistoryTest, TwoByteUnsyncTypes);
+
+template <typename T>
+class UnsynchronizedOverflowHistoryTest : public TestBase<T> {
+  protected:
+    virtual void TearDown() { delete mQueue; }
+
+    virtual void SetUp() {
+        static constexpr size_t kNumElementsInQueue = 2048;
+        static constexpr size_t kPayloadSizeBytes = 2;
+        if (T::Setup == SetupType::SINGLE_FD) {
+            mQueue = new (std::nothrow) typename T::MQType(kNumElementsInQueue);
+        } else {
+            android::base::unique_fd ringbufferFd(::ashmem_create_region(
+                    "UnsyncHistory", kNumElementsInQueue * kPayloadSizeBytes));
+            mQueue = new (std::nothrow)
+                    typename T::MQType(kNumElementsInQueue, false, std::move(ringbufferFd),
+                                       kNumElementsInQueue * kPayloadSizeBytes);
+        }
+        ASSERT_NE(nullptr, mQueue);
+        ASSERT_TRUE(mQueue->isValid());
+        mNumMessagesMax = mQueue->getQuantumCount();
+        ASSERT_EQ(kNumElementsInQueue, mNumMessagesMax);
+    }
+
+    typename T::MQType* mQueue = nullptr;
+    size_t mNumMessagesMax = 0;
+};
+
+TYPED_TEST_CASE(UnsynchronizedOverflowHistoryTestSingleElement, TwoByteUnsyncTypes);
+
+template <typename T>
+class UnsynchronizedOverflowHistoryTestSingleElement : public TestBase<T> {
+  protected:
+    virtual void TearDown() { delete mQueue; }
+
+    virtual void SetUp() {
+        static constexpr size_t kNumElementsInQueue = 1;
+        static constexpr size_t kPayloadSizeBytes = 2;
+        if (T::Setup == SetupType::SINGLE_FD) {
+            mQueue = new (std::nothrow) typename T::MQType(kNumElementsInQueue);
+        } else {
+            android::base::unique_fd ringbufferFd(::ashmem_create_region(
+                    "UnsyncHistory", kNumElementsInQueue * kPayloadSizeBytes));
+            mQueue = new (std::nothrow)
+                    typename T::MQType(kNumElementsInQueue, false, std::move(ringbufferFd),
+                                       kNumElementsInQueue * kPayloadSizeBytes);
+        }
+        ASSERT_NE(nullptr, mQueue);
+        ASSERT_TRUE(mQueue->isValid());
+        mNumMessagesMax = mQueue->getQuantumCount();
+        ASSERT_EQ(kNumElementsInQueue, mNumMessagesMax);
+    }
+
+    typename T::MQType* mQueue = nullptr;
+    size_t mNumMessagesMax = 0;
+};
+
 template <typename T>
 class BadQueueConfig : public TestBase<T> {};
 
 class AidlOnlyBadQueueConfig : public ::testing::Test {};
+class HidlOnlyBadQueueConfig : public ::testing::Test {};
 class Hidl2AidlOperation : public ::testing::Test {};
 class DoubleFdFailures : public ::testing::Test {};
 
 /*
  * Utility function to initialize data to be written to the FMQ
  */
-inline void initData(uint8_t* data, size_t count) {
+template <typename T>
+inline void initData(T* data, size_t count) {
     for (size_t i = 0; i < count; i++) {
         data[i] = i & 0xFF;
     }
@@ -301,38 +393,109 @@ void TestBase<T>::ReaderThreadBlocking2(typename T::MQType* fmq, std::atomic<uin
 
 TYPED_TEST(BadQueueConfig, QueueSizeTooLarge) {
     size_t numElementsInQueue = SIZE_MAX / sizeof(uint16_t) + 1;
-    typename TypeParam::MQType* fmq =
-            new (std::nothrow) typename TypeParam::MQType(numElementsInQueue);
-    ASSERT_NE(nullptr, fmq);
+    typename TypeParam::MQType fmq(numElementsInQueue);
     /*
      * Should fail due to size being too large to fit into size_t.
      */
-    ASSERT_FALSE(fmq->isValid());
+    ASSERT_FALSE(fmq.isValid());
 }
 
-// If this test fails and we do leak FDs, the next test will cause a crash
+// {flags, fdIndex, offset, extent}
+static const std::vector<android::hardware::GrantorDescriptor> kGrantors = {
+        {0, 0, 0, 4096},
+        {0, 0, 0, 4096},
+        {0, 0, 0, 4096},
+};
+
+// Make sure this passes without invalid index/extent for the next two test
+// cases
+TEST_F(HidlOnlyBadQueueConfig, SanityCheck) {
+    std::vector<android::hardware::GrantorDescriptor> grantors = kGrantors;
+
+    native_handle_t* handle = native_handle_create(1, 0);
+    int ashmemFd = ashmem_create_region("QueueHidlOnlyBad", 4096);
+    ashmem_set_prot_region(ashmemFd, PROT_READ | PROT_WRITE);
+    handle->data[0] = ashmemFd;
+
+    android::hardware::MQDescriptor<uint16_t, kSynchronizedReadWrite> desc(grantors, handle,
+                                                                           sizeof(uint16_t));
+    android::hardware::MessageQueue<uint16_t, kSynchronizedReadWrite> fmq(desc);
+    EXPECT_TRUE(fmq.isValid());
+
+    close(ashmemFd);
+}
+
+TEST_F(HidlOnlyBadQueueConfig, BadFdIndex) {
+    std::vector<android::hardware::GrantorDescriptor> grantors = kGrantors;
+    grantors[0].fdIndex = 5;
+
+    native_handle_t* handle = native_handle_create(1, 0);
+    int ashmemFd = ashmem_create_region("QueueHidlOnlyBad", 4096);
+    ashmem_set_prot_region(ashmemFd, PROT_READ | PROT_WRITE);
+    handle->data[0] = ashmemFd;
+
+    android::hardware::MQDescriptor<uint16_t, kSynchronizedReadWrite> desc(grantors, handle,
+                                                                           sizeof(uint16_t));
+    android::hardware::MessageQueue<uint16_t, kSynchronizedReadWrite> fmq(desc);
+    /*
+     * Should fail due fdIndex being out of range of the native_handle.
+     */
+    EXPECT_FALSE(fmq.isValid());
+
+    close(ashmemFd);
+}
+
+TEST_F(HidlOnlyBadQueueConfig, ExtentTooLarge) {
+    std::vector<android::hardware::GrantorDescriptor> grantors = kGrantors;
+    grantors[0].extent = 0xfffff041;
+
+    native_handle_t* handle = native_handle_create(1, 0);
+    int ashmemFd = ashmem_create_region("QueueHidlOnlyBad", 4096);
+    ashmem_set_prot_region(ashmemFd, PROT_READ | PROT_WRITE);
+    handle->data[0] = ashmemFd;
+
+    android::hardware::MQDescriptor<uint16_t, kSynchronizedReadWrite> desc(grantors, handle,
+                                                                           sizeof(uint16_t));
+    android::hardware::MessageQueue<uint16_t, kSynchronizedReadWrite> fmq(desc);
+    /*
+     * Should fail due to extent being too large.
+     */
+    EXPECT_FALSE(fmq.isValid());
+
+    close(ashmemFd);
+}
+
+long numFds() {
+    return std::distance(std::filesystem::directory_iterator("/proc/self/fd"),
+                         std::filesystem::directory_iterator{});
+}
+
 TEST_F(AidlOnlyBadQueueConfig, LookForLeakedFds) {
-    size_t numElementsInQueue = SIZE_MAX / sizeof(uint32_t) - PAGE_SIZE - 1;
-    struct rlimit rlim;
-    ASSERT_EQ(getrlimit(RLIMIT_NOFILE, &rlim), 0);
-    for (int i = 0; i <= rlim.rlim_cur + 1; i++) {
+    // Write a log msg first to open the pmsg FD and socket to logd.
+    LOG(INFO) << "Nothin' to see here...";
+    // create/destroy a large number of queues that if we were leaking FDs
+    // we could detect it by looking at the number of FDs opened by the this
+    // test process.
+    constexpr uint32_t kNumQueues = 100;
+    const size_t kPageSize = getpagesize();
+    size_t numElementsInQueue = SIZE_MAX / sizeof(uint32_t) - kPageSize - 1;
+    long numFdsBefore = numFds();
+    for (int i = 0; i < kNumQueues; i++) {
         android::AidlMessageQueue<uint32_t, SynchronizedReadWrite> fmq(numElementsInQueue);
         ASSERT_FALSE(fmq.isValid());
     }
-    // try to get another FD
-    int fd = ashmem_create_region("test", 100);
-    ASSERT_NE(fd, -1);
-    close(fd);
+    long numFdsAfter = numFds();
+    EXPECT_LT(numFdsAfter, kNumQueues);
+    EXPECT_EQ(numFdsAfter, numFdsBefore);
 }
 
 TEST_F(Hidl2AidlOperation, ConvertDescriptorsSync) {
     size_t numElementsInQueue = 64;
 
     // Create HIDL side and get MQDescriptor
-    MessageQueueSync8* fmq = new (std::nothrow) MessageQueueSync8(numElementsInQueue);
-    ASSERT_NE(nullptr, fmq);
-    ASSERT_TRUE(fmq->isValid());
-    const HidlMQDescSync8* hidlDesc = fmq->getDesc();
+    MessageQueueSync8 fmq(numElementsInQueue);
+    ASSERT_TRUE(fmq.isValid());
+    const HidlMQDescSync8* hidlDesc = fmq.getDesc();
     ASSERT_NE(nullptr, hidlDesc);
 
     // Create AIDL MQDescriptor to send to another process based off the HIDL MQDescriptor
@@ -341,17 +504,16 @@ TEST_F(Hidl2AidlOperation, ConvertDescriptorsSync) {
                                                                                   &aidlDesc);
 
     // Other process will create the other side of the queue using the AIDL MQDescriptor
-    AidlMessageQueueSync8* aidlFmq = new (std::nothrow) AidlMessageQueueSync8(aidlDesc);
-    ASSERT_NE(nullptr, aidlFmq);
-    ASSERT_TRUE(aidlFmq->isValid());
+    AidlMessageQueueSync8 aidlFmq(aidlDesc);
+    ASSERT_TRUE(aidlFmq.isValid());
 
     // Make sure a write to the HIDL side, will show up for the AIDL side
     constexpr size_t dataLen = 4;
     uint8_t data[dataLen] = {12, 11, 10, 9};
-    fmq->write(data, dataLen);
+    fmq.write(data, dataLen);
 
     int8_t readData[dataLen];
-    ASSERT_TRUE(aidlFmq->read(readData, dataLen));
+    ASSERT_TRUE(aidlFmq.read(readData, dataLen));
 
     ASSERT_EQ(data[0], readData[0]);
     ASSERT_EQ(data[1], readData[1]);
@@ -363,10 +525,9 @@ TEST_F(Hidl2AidlOperation, ConvertDescriptorsUnsync) {
     size_t numElementsInQueue = 64;
 
     // Create HIDL side and get MQDescriptor
-    MessageQueueUnsync8* fmq = new (std::nothrow) MessageQueueUnsync8(numElementsInQueue);
-    ASSERT_NE(nullptr, fmq);
-    ASSERT_TRUE(fmq->isValid());
-    const HidlMQDescUnsync8* hidlDesc = fmq->getDesc();
+    MessageQueueUnsync8 fmq(numElementsInQueue);
+    ASSERT_TRUE(fmq.isValid());
+    const HidlMQDescUnsync8* hidlDesc = fmq.getDesc();
     ASSERT_NE(nullptr, hidlDesc);
 
     // Create AIDL MQDescriptor to send to another process based off the HIDL MQDescriptor
@@ -375,24 +536,22 @@ TEST_F(Hidl2AidlOperation, ConvertDescriptorsUnsync) {
                                                                                 &aidlDesc);
 
     // Other process will create the other side of the queue using the AIDL MQDescriptor
-    AidlMessageQueueUnsync8* aidlFmq = new (std::nothrow) AidlMessageQueueUnsync8(aidlDesc);
-    ASSERT_NE(nullptr, aidlFmq);
-    ASSERT_TRUE(aidlFmq->isValid());
+    AidlMessageQueueUnsync8 aidlFmq(aidlDesc);
+    ASSERT_TRUE(aidlFmq.isValid());
 
     // Can have multiple readers with unsync flavor
-    AidlMessageQueueUnsync8* aidlFmq2 = new (std::nothrow) AidlMessageQueueUnsync8(aidlDesc);
-    ASSERT_NE(nullptr, aidlFmq2);
-    ASSERT_TRUE(aidlFmq2->isValid());
+    AidlMessageQueueUnsync8 aidlFmq2(aidlDesc);
+    ASSERT_TRUE(aidlFmq2.isValid());
 
     // Make sure a write to the HIDL side, will show up for the AIDL side
     constexpr size_t dataLen = 4;
     uint8_t data[dataLen] = {12, 11, 10, 9};
-    fmq->write(data, dataLen);
+    fmq.write(data, dataLen);
 
     int8_t readData[dataLen];
-    ASSERT_TRUE(aidlFmq->read(readData, dataLen));
+    ASSERT_TRUE(aidlFmq.read(readData, dataLen));
     int8_t readData2[dataLen];
-    ASSERT_TRUE(aidlFmq2->read(readData2, dataLen));
+    ASSERT_TRUE(aidlFmq2.read(readData2, dataLen));
 
     ASSERT_EQ(data[0], readData[0]);
     ASSERT_EQ(data[1], readData[1]);
@@ -417,12 +576,12 @@ TEST_F(Hidl2AidlOperation, ConvertFdIndex1) {
     grantors[1] = {0, 1 /* fdIndex */, 16, 16};
     grantors[2] = {0, 1 /* fdIndex */, 16, 16};
 
-    HidlMQDescUnsync8* hidlDesc = new (std::nothrow) HidlMQDescUnsync8(grantors, mqHandle, 10);
-    ASSERT_TRUE(hidlDesc->isHandleValid());
+    HidlMQDescUnsync8 hidlDesc(grantors, mqHandle, 10);
+    ASSERT_TRUE(hidlDesc.isHandleValid());
 
     AidlMQDescUnsync8 aidlDesc;
     bool ret = android::unsafeHidlToAidlMQDescriptor<uint8_t, int8_t, UnsynchronizedWrite>(
-            *hidlDesc, &aidlDesc);
+            hidlDesc, &aidlDesc);
     ASSERT_TRUE(ret);
 }
 
@@ -439,16 +598,14 @@ TEST_F(Hidl2AidlOperation, ConvertMultipleFds) {
     grantors[1] = {0, 1 /* fdIndex */, 16, 16};
     grantors[2] = {0, 0 /* fdIndex */, 16, 16};
 
-    HidlMQDescUnsync8* hidlDesc = new (std::nothrow) HidlMQDescUnsync8(grantors, mqHandle, 10);
-    ASSERT_TRUE(hidlDesc->isHandleValid());
+    HidlMQDescUnsync8 hidlDesc(grantors, mqHandle, 10);
+    ASSERT_TRUE(hidlDesc.isHandleValid());
 
     AidlMQDescUnsync8 aidlDesc;
     bool ret = android::unsafeHidlToAidlMQDescriptor<uint8_t, int8_t, UnsynchronizedWrite>(
-            *hidlDesc, &aidlDesc);
+            hidlDesc, &aidlDesc);
     ASSERT_TRUE(ret);
     EXPECT_EQ(aidlDesc.handle.fds.size(), 2);
-    native_handle_close(mqHandle);
-    native_handle_delete(mqHandle);
 }
 
 // TODO(b/165674950) Since AIDL does not support unsigned integers, it can only support
@@ -456,23 +613,21 @@ TEST_F(Hidl2AidlOperation, ConvertMultipleFds) {
 // lifted. Until then, check against SSIZE_MAX instead of SIZE_MAX.
 TEST_F(AidlOnlyBadQueueConfig, QueueSizeTooLargeForAidl) {
     size_t numElementsInQueue = SSIZE_MAX / sizeof(uint16_t) + 1;
-    AidlMessageQueueSync16* fmq = new (std::nothrow) AidlMessageQueueSync16(numElementsInQueue);
-    ASSERT_NE(nullptr, fmq);
+    AidlMessageQueueSync16 fmq(numElementsInQueue);
     /*
      * Should fail due to size being too large to fit into size_t.
      */
-    ASSERT_FALSE(fmq->isValid());
+    ASSERT_FALSE(fmq.isValid());
 }
 
 TEST_F(AidlOnlyBadQueueConfig, NegativeAidlDescriptor) {
     aidl::android::hardware::common::fmq::MQDescriptor<uint16_t, SynchronizedReadWrite> desc;
     desc.quantum = -10;
-    AidlMessageQueueSync16* fmq = new (std::nothrow) AidlMessageQueueSync16(desc);
-    ASSERT_NE(nullptr, fmq);
+    AidlMessageQueueSync16 fmq(desc);
     /*
      * Should fail due to quantum being negative.
      */
-    ASSERT_FALSE(fmq->isValid());
+    ASSERT_FALSE(fmq.isValid());
 }
 
 TEST_F(AidlOnlyBadQueueConfig, NegativeAidlDescriptorGrantor) {
@@ -481,12 +636,11 @@ TEST_F(AidlOnlyBadQueueConfig, NegativeAidlDescriptorGrantor) {
     desc.flags = 0;
     desc.grantors.push_back(
             aidl::android::hardware::common::fmq::GrantorDescriptor{.offset = 12, .extent = -10});
-    AidlMessageQueueSync16* fmq = new (std::nothrow) AidlMessageQueueSync16(desc);
-    ASSERT_NE(nullptr, fmq);
+    AidlMessageQueueSync16 fmq(desc);
     /*
      * Should fail due to grantor having negative extent.
      */
-    ASSERT_FALSE(fmq->isValid());
+    ASSERT_FALSE(fmq.isValid());
 }
 
 /*
@@ -516,8 +670,8 @@ TEST_F(AidlOnlyBadQueueConfig, MismatchedPayloadSize) {
  */
 TEST_F(DoubleFdFailures, InvalidFd) {
     android::base::SetLogger(android::base::StdioLogger);
-    EXPECT_DEATH_IF_SUPPORTED(AidlMessageQueueSync(64, false, android::base::unique_fd(3000), 64),
-                              "Check failed: exp mRing is null");
+    auto queue = AidlMessageQueueSync(64, false, android::base::unique_fd(3000), 64);
+    EXPECT_FALSE(queue.isValid());
 }
 
 /*
@@ -634,6 +788,78 @@ TYPED_TEST(BlockingReadWrites, BlockingTimeOutTest) {
      * Wait should time out in a second.
      */
     EXPECT_EQ(android::TIMED_OUT, ret);
+
+    status = android::hardware::EventFlag::deleteEventFlag(&efGroup);
+    ASSERT_EQ(android::NO_ERROR, status);
+}
+
+/*
+ * Test EventFlag wait on a waked flag with a short timeout.
+ */
+TYPED_TEST(BlockingReadWrites, ShortEventFlagWaitWithWakeTest) {
+    std::atomic<uint32_t> eventFlagWord;
+    std::atomic_init(&eventFlagWord, static_cast<uint32_t>(kFmqNotFull));
+    android::hardware::EventFlag* efGroup = nullptr;
+    android::status_t status =
+            android::hardware::EventFlag::createEventFlag(&eventFlagWord, &efGroup);
+    ASSERT_EQ(android::NO_ERROR, status);
+    ASSERT_NE(nullptr, efGroup);
+
+    status = efGroup->wake(kFmqNotEmpty);
+    ASSERT_EQ(android::NO_ERROR, status);
+
+    uint32_t efState = 0;
+    android::status_t ret = efGroup->wait(kFmqNotEmpty, &efState, 1 /* ns */, true /* retry */);
+    ASSERT_EQ(android::NO_ERROR, ret);
+
+    status = android::hardware::EventFlag::deleteEventFlag(&efGroup);
+    ASSERT_EQ(android::NO_ERROR, status);
+}
+
+/*
+ * Test on an EventFlag with no wakeup, short timeout.
+ */
+TYPED_TEST(BlockingReadWrites, ShortEventFlagWaitWithoutWakeTest) {
+    std::atomic<uint32_t> eventFlagWord;
+    std::atomic_init(&eventFlagWord, static_cast<uint32_t>(kFmqNotFull));
+    android::hardware::EventFlag* efGroup = nullptr;
+    android::status_t status =
+            android::hardware::EventFlag::createEventFlag(&eventFlagWord, &efGroup);
+    ASSERT_EQ(android::NO_ERROR, status);
+    ASSERT_NE(nullptr, efGroup);
+
+    uint32_t efState = 0;
+    android::status_t ret = efGroup->wait(kFmqNotEmpty, &efState, 1 /* ns */, true /* retry */);
+    ASSERT_EQ(android::TIMED_OUT, ret);
+
+    status = android::hardware::EventFlag::deleteEventFlag(&efGroup);
+    ASSERT_EQ(android::NO_ERROR, status);
+}
+
+/*
+ * Test FMQ write and read with event flag wait.
+ */
+TYPED_TEST(BlockingReadWrites, FmqWriteAndReadWithShortEventFlagWaitTest) {
+    android::hardware::EventFlag* efGroup = nullptr;
+    android::status_t status = android::hardware::EventFlag::createEventFlag(&this->mFw, &efGroup);
+    ASSERT_EQ(android::NO_ERROR, status);
+    ASSERT_NE(nullptr, efGroup);
+
+    /*
+     * After waiting for some time write into the FMQ
+     * and call Wake on kFmqNotEmpty.
+     */
+    const size_t dataLen = 16;
+    uint8_t dataW[dataLen] = {0};
+    uint8_t dataR[dataLen] = {0};
+    ASSERT_TRUE(this->mQueue->write(dataW, dataLen));
+    status = efGroup->wake(kFmqNotEmpty);
+    ASSERT_EQ(android::NO_ERROR, status);
+
+    ASSERT_TRUE(this->mQueue->readBlocking(dataR, dataLen, static_cast<uint32_t>(kFmqNotEmpty),
+                                           static_cast<uint32_t>(kFmqNotFull), 1 /* timeOutNanos */,
+                                           efGroup));
+    ASSERT_EQ(0, memcmp(dataW, dataR, dataLen));
 
     status = android::hardware::EventFlag::deleteEventFlag(&efGroup);
     ASSERT_EQ(android::NO_ERROR, status);
@@ -982,7 +1208,7 @@ TYPED_TEST(SynchronizedReadWrites, ReadWriteWrapAround2) {
 /*
  * Verify that a few bytes of data can be successfully written and read.
  */
-TYPED_TEST(UnsynchronizedWriteTest, SmallInputTest1) {
+TYPED_TEST(UnsynchronizedReadWriteTest, SmallInputTest1) {
     const size_t dataLen = 16;
     ASSERT_LE(dataLen, this->mNumMessagesMax);
     uint8_t data[dataLen];
@@ -997,7 +1223,7 @@ TYPED_TEST(UnsynchronizedWriteTest, SmallInputTest1) {
 /*
  * Verify that read() returns false when trying to read from an empty queue.
  */
-TYPED_TEST(UnsynchronizedWriteTest, ReadWhenEmpty) {
+TYPED_TEST(UnsynchronizedReadWriteTest, ReadWhenEmpty) {
     ASSERT_EQ(0UL, this->mQueue->availableToRead());
     const size_t dataLen = 2;
     ASSERT_TRUE(dataLen < this->mNumMessagesMax);
@@ -1009,7 +1235,7 @@ TYPED_TEST(UnsynchronizedWriteTest, ReadWhenEmpty) {
  * Write the queue when full. Verify that a subsequent writes is succesful.
  * Verify that availableToWrite() returns 0 as expected.
  */
-TYPED_TEST(UnsynchronizedWriteTest, WriteWhenFull1) {
+TYPED_TEST(UnsynchronizedReadWriteTest, WriteWhenFull1) {
     ASSERT_EQ(0UL, this->mQueue->availableToRead());
     std::vector<uint8_t> data(this->mNumMessagesMax);
 
@@ -1027,7 +1253,7 @@ TYPED_TEST(UnsynchronizedWriteTest, WriteWhenFull1) {
  * using beginRead()/commitRead() is succesful.
  * Verify that the next read fails as expected for unsynchronized flavor.
  */
-TYPED_TEST(UnsynchronizedWriteTest, WriteWhenFull2) {
+TYPED_TEST(UnsynchronizedReadWriteTest, WriteWhenFull2) {
     ASSERT_EQ(0UL, this->mQueue->availableToRead());
     std::vector<uint8_t> data(this->mNumMessagesMax);
     ASSERT_TRUE(this->mQueue->write(&data[0], this->mNumMessagesMax));
@@ -1050,7 +1276,7 @@ TYPED_TEST(UnsynchronizedWriteTest, WriteWhenFull2) {
  * Verify that the write is successful and the subsequent read
  * returns the expected data.
  */
-TYPED_TEST(UnsynchronizedWriteTest, LargeInputTest1) {
+TYPED_TEST(UnsynchronizedReadWriteTest, LargeInputTest1) {
     std::vector<uint8_t> data(this->mNumMessagesMax);
     initData(&data[0], this->mNumMessagesMax);
     ASSERT_TRUE(this->mQueue->write(&data[0], this->mNumMessagesMax));
@@ -1064,7 +1290,7 @@ TYPED_TEST(UnsynchronizedWriteTest, LargeInputTest1) {
  * Verify that it fails. Verify that a subsequent read fails and
  * the queue is still empty.
  */
-TYPED_TEST(UnsynchronizedWriteTest, LargeInputTest2) {
+TYPED_TEST(UnsynchronizedReadWriteTest, LargeInputTest2) {
     ASSERT_EQ(0UL, this->mQueue->availableToRead());
     const size_t dataLen = 4096;
     ASSERT_GT(dataLen, this->mNumMessagesMax);
@@ -1082,7 +1308,7 @@ TYPED_TEST(UnsynchronizedWriteTest, LargeInputTest2) {
  * the attempt is succesful. Verify that the read fails
  * as expected.
  */
-TYPED_TEST(UnsynchronizedWriteTest, LargeInputTest3) {
+TYPED_TEST(UnsynchronizedReadWriteTest, LargeInputTest3) {
     std::vector<uint8_t> data(this->mNumMessagesMax);
     initData(&data[0], this->mNumMessagesMax);
     ASSERT_TRUE(this->mQueue->write(&data[0], this->mNumMessagesMax));
@@ -1094,7 +1320,7 @@ TYPED_TEST(UnsynchronizedWriteTest, LargeInputTest3) {
 /*
  * Verify that multiple reads one after the other return expected data.
  */
-TYPED_TEST(UnsynchronizedWriteTest, MultipleRead) {
+TYPED_TEST(UnsynchronizedReadWriteTest, MultipleRead) {
     const size_t chunkSize = 100;
     const size_t chunkNum = 5;
     const size_t dataLen = chunkSize * chunkNum;
@@ -1112,7 +1338,7 @@ TYPED_TEST(UnsynchronizedWriteTest, MultipleRead) {
 /*
  * Verify that multiple writes one after the other happens correctly.
  */
-TYPED_TEST(UnsynchronizedWriteTest, MultipleWrite) {
+TYPED_TEST(UnsynchronizedReadWriteTest, MultipleWrite) {
     const size_t chunkSize = 100;
     const size_t chunkNum = 5;
     const size_t dataLen = chunkSize * chunkNum;
@@ -1135,7 +1361,7 @@ TYPED_TEST(UnsynchronizedWriteTest, MultipleWrite) {
  * Write mNumMessagesMax messages into the queue. This will cause a
  * wrap around. Read and verify the data.
  */
-TYPED_TEST(UnsynchronizedWriteTest, ReadWriteWrapAround) {
+TYPED_TEST(UnsynchronizedReadWriteTest, ReadWriteWrapAround) {
     size_t numMessages = this->mNumMessagesMax - 1;
     std::vector<uint8_t> data(this->mNumMessagesMax);
     std::vector<uint8_t> readData(this->mNumMessagesMax);
@@ -1146,4 +1372,144 @@ TYPED_TEST(UnsynchronizedWriteTest, ReadWriteWrapAround) {
     ASSERT_TRUE(this->mQueue->write(&data[0], this->mNumMessagesMax));
     ASSERT_TRUE(this->mQueue->read(&readData[0], this->mNumMessagesMax));
     ASSERT_EQ(data, readData);
+}
+
+/*
+ * Attempt to read more than the maximum number of messages in the queue.
+ */
+TYPED_TEST(UnsynchronizedReadWriteTest, ReadMoreThanNumMessagesMaxFails) {
+    // Fill the queue with data
+    std::vector<uint8_t> data(this->mNumMessagesMax);
+    initData(data.data(), data.size());
+    ASSERT_TRUE(this->mQueue->write(data.data(), data.size()));
+
+    // Attempt to read more than the maximum number of messages in the queue.
+    std::vector<uint8_t> readData(this->mNumMessagesMax + 1);
+    ASSERT_FALSE(this->mQueue->read(readData.data(), readData.size()));
+}
+
+/*
+ * Write some data to the queue and attempt to read more than the available data.
+ */
+TYPED_TEST(UnsynchronizedReadWriteTest, ReadMoreThanAvailableToReadFails) {
+    // Fill half of the queue with data.
+    size_t dataLen = this->mNumMessagesMax / 2;
+    std::vector<uint8_t> data(dataLen);
+    initData(data.data(), data.size());
+    ASSERT_TRUE(this->mQueue->write(data.data(), data.size()));
+
+    // Attempt to read more than the available data.
+    std::vector<uint8_t> readData(dataLen + 1);
+    ASSERT_FALSE(this->mQueue->read(readData.data(), readData.size()));
+}
+
+/*
+ * Ensure that the template specialization of MessageQueueBase to element types
+ * other than MQErased exposes its static knowledge of element size.
+ */
+TEST(MessageQueueErasedTest, MQErasedCompiles) {
+    auto txn = AidlMessageQueueSync::MemRegion();
+    txn.getLengthInBytes();
+}
+
+extern "C" uint8_t fmq_rust_test(void);
+
+/*
+ * Test using the FMQ from Rust.
+ */
+TEST(RustInteropTest, Simple) {
+    ASSERT_EQ(fmq_rust_test(), 1);
+}
+
+/*
+ * Verifies that after ring buffer overflow and first failed attempt to read
+ * the whole ring buffer is available to read and old values was discarded.
+ */
+TYPED_TEST(UnsynchronizedOverflowHistoryTest, ReadAfterOverflow) {
+    std::vector<uint16_t> data(this->mNumMessagesMax);
+
+    // Fill the queue with monotonic pattern
+    initData(&data[0], this->mNumMessagesMax);
+    ASSERT_TRUE(this->mQueue->write(&data[0], this->mNumMessagesMax));
+
+    // Write more data (first element of the same data) to cause a wrap around
+    ASSERT_TRUE(this->mQueue->write(&data[0], 1));
+
+    // Attempt a read (this should fail due to how UnsynchronizedWrite works)
+    uint16_t readDataPlaceholder;
+    ASSERT_FALSE(this->mQueue->read(&readDataPlaceholder, 1));
+
+    // Verify 1/2 of the ring buffer is available to read
+    ASSERT_EQ(this->mQueue->availableToRead(), this->mQueue->getQuantumCount() / 2);
+
+    // Next read should succeed as the queue read pointer have been reset in previous read.
+    std::vector<uint16_t> readData(this->mQueue->availableToRead());
+    ASSERT_TRUE(this->mQueue->read(readData.data(), readData.size()));
+
+    // Verify that the tail of the data is preserved in history after partial wrap around
+    // and followed by the new data.
+    std::rotate(data.begin(), data.begin() + 1, data.end());
+
+    // Compare in reverse to match tail of the data with readData
+    ASSERT_TRUE(std::equal(readData.rbegin(), readData.rend(), data.rbegin()));
+}
+
+/*
+ * Verifies that after ring buffer overflow between beginRead() and failed commitRead()
+ * the whole ring buffer is available to read and old values was discarded.
+ */
+TYPED_TEST(UnsynchronizedOverflowHistoryTest, CommitReadAfterOverflow) {
+    std::vector<uint16_t> data(this->mNumMessagesMax);
+
+    // Fill the queue with monotonic pattern
+    initData(&data[0], this->mNumMessagesMax);
+    ASSERT_TRUE(this->mQueue->write(&data[0], this->mNumMessagesMax));
+
+    typename TypeParam::MQType::MemTransaction tx;
+    ASSERT_TRUE(this->mQueue->beginRead(this->mNumMessagesMax, &tx));
+
+    // Write more data (first element of the same data) to cause a wrap around
+    ASSERT_TRUE(this->mQueue->write(&data[0], 1));
+
+    // Attempt to commit a read should fail due to ring buffer wrap around
+    ASSERT_FALSE(this->mQueue->commitRead(this->mNumMessagesMax));
+
+    // Verify 1/2 of the ring buffer is available to read
+    ASSERT_EQ(this->mQueue->availableToRead(), this->mQueue->getQuantumCount() / 2);
+
+    // Next read should succeed as the queue read pointer have been reset in previous commitRead.
+    std::vector<uint16_t> readData(this->mQueue->availableToRead());
+    ASSERT_TRUE(this->mQueue->read(readData.data(), readData.size()));
+
+    // Verify that the tail of the data is preserved in history after partial wrap around
+    // and followed by the new data.
+    std::rotate(data.begin(), data.begin() + 1, data.end());
+    ASSERT_TRUE(std::equal(readData.rbegin(), readData.rend(), data.rbegin()));
+}
+
+/*
+ * Verifies a queue of a single element will fail a read after a write overflow
+ * and then recover.
+ */
+TYPED_TEST(UnsynchronizedOverflowHistoryTestSingleElement, ReadAfterOverflow) {
+    constexpr uint16_t kValue = 4;
+    std::vector<uint16_t> data = {kValue};
+
+    // single write/read works normally
+    ASSERT_TRUE(this->mQueue->write(&data[0], 1));
+    uint16_t readDataPlaceholder;
+    ASSERT_TRUE(this->mQueue->read(&readDataPlaceholder, 1));
+    EXPECT_EQ(readDataPlaceholder, kValue);
+
+    // Write more data (first element of the same data) to cause a wrap around
+    ASSERT_TRUE(this->mQueue->write(&data[0], 1));
+    ASSERT_TRUE(this->mQueue->write(&data[0], 1));
+
+    // Attempt a read (this should fail due to how UnsynchronizedWrite works)
+    ASSERT_FALSE(this->mQueue->read(&readDataPlaceholder, 1));
+
+    // Subsequent write/reads should work again
+    ASSERT_TRUE(this->mQueue->write(&data[0], 1));
+    ASSERT_TRUE(this->mQueue->read(&readDataPlaceholder, 1));
+    EXPECT_EQ(readDataPlaceholder, kValue);
 }

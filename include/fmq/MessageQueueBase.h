@@ -23,12 +23,16 @@
 #include <utils/SystemClock.h>
 #include <cutils/native_handle.h>
 #include <atomic>
+<<<<<<< HEAD
 #include <new>
 #include <memory>
 #include <vector>
 #include <fmq/MQDescriptorBase.h>
 
 #include <fmq/system_porting.h>
+=======
+#include <functional>
+>>>>>>> 208ef36
 
 using android::hardware::kSynchronizedReadWrite;
 using android::hardware::kUnsynchronizedWrite;
@@ -60,9 +64,21 @@ using android::hardware::MQFlavor;
 
 namespace android {
 
+/* sentinel payload type that indicates the MQ will be used with a mismatching
+MQDescriptor type, where type safety must be enforced elsewhere because the real
+element type T is not statically known. This is used to instantiate
+MessageQueueBase instances for Rust where we cannot generate additional template
+instantiations across the language boundary. */
+enum MQErased {};
+
 template <template <typename, MQFlavor> class MQDescriptorType, typename T, MQFlavor flavor>
 struct MessageQueueBase {
     typedef MQDescriptorType<T, flavor> Descriptor;
+    enum Error : int {
+        NONE,
+        POINTER_CORRUPTION, /** Read/write pointers mismatch */
+    };
+    using ErrorHandler = std::function<void(Error, std::string&&)>;
 
     /**
      * @param Desc MQDescriptor describing the FMQ.
@@ -95,12 +111,29 @@ struct MessageQueueBase {
                       android::base::unique_fd bufferFd, size_t bufferSize, std::string name = "" );
 #else
     MessageQueueBase(size_t numElementsInQueue, bool configureEventFlagWord,
+<<<<<<< HEAD
                      android::base::unique_fd bufferFd, size_t bufferSize);
 #endif
+=======
+                     android::base::unique_fd bufferFd, size_t bufferSize)
+        : MessageQueueBase(numElementsInQueue, configureEventFlagWord, std::move(bufferFd),
+                           bufferSize, sizeof(T)) {
+        /* We must not pass sizeof(T) as quantum for MQErased element type. */
+        static_assert(!std::is_same_v<T, MQErased>,
+                      "MessageQueueBase<..., MQErased, ...> must be constructed via a"
+                      " constructor that accepts a descriptor or a quantum size");
+    };
+>>>>>>> 208ef36
 
     MessageQueueBase(size_t numElementsInQueue, bool configureEventFlagWord = false)
         : MessageQueueBase(numElementsInQueue, configureEventFlagWord, android::base::unique_fd(),
                            0) {}
+
+    /**
+     * Set a client side error handler function which will be invoked when the FMQ detects
+     * one of the error situations defined by the 'Error' type.
+     */
+    void setErrorHandler(ErrorHandler&& handler) { mErrorHandler.swap(handler); }
 
     /**
      * @return Number of items of type T that can be written into the FMQ
@@ -117,7 +150,7 @@ struct MessageQueueBase {
     /**
      * Returns the size of type T in bytes.
      *
-     * @param Size of T.
+     * @return Size of T.
      */
     size_t getQuantumSize() const;
 
@@ -301,7 +334,10 @@ struct MessageQueueBase {
         /**
          * Gets the length of the MemRegion in bytes.
          */
-        inline size_t getLengthInBytes() const { return length * sizeof(T); }
+        template <class U = T>
+        inline std::enable_if_t<!std::is_same_v<U, MQErased>, size_t> getLengthInBytes() const {
+            return length * kQuantumValue<U>;
+        }
 
       private:
         /* Base address */
@@ -389,6 +425,11 @@ struct MessageQueueBase {
         inline const MemRegion& getSecondRegion() const { return second; }
 
       private:
+        friend MessageQueueBase<MQDescriptorType, T, flavor>;
+
+        bool copyToSized(const T* data, size_t startIdx, size_t nMessages, size_t messageSize);
+        bool copyFromSized(T* data, size_t startIdx, size_t nMessages, size_t messageSize);
+
         /*
          * Given a start index and the number of messages to be
          * read/written, this helper method calculates the
@@ -456,7 +497,29 @@ struct MessageQueueBase {
      */
     bool commitRead(size_t nMessages);
 
+    /**
+     * Get the pointer to the ring buffer. Useful for debugging and fuzzing.
+     */
+    uint8_t* getRingBufferPtr() const { return mRing; }
+
+  protected:
+    /**
+     * Protected constructor that can manually specify the quantum to use.
+     * The only external consumer of this ctor is ErasedMessageQueue, but the
+     * constructor cannot be private because this is a base class.
+     *
+     * @param quantum Size of the element type, in bytes.
+     * Other parameters have semantics given in the corresponding public ctor.
+     */
+
+    MessageQueueBase(size_t numElementsInQueue, bool configureEventFlagWord,
+                     android::base::unique_fd bufferFd, size_t bufferSize, size_t quantum);
+
   private:
+    template <class U = T,
+              typename std::enable_if<!std::is_same<U, MQErased>::value, bool>::type = true>
+    static constexpr size_t kQuantumValue = sizeof(T);
+    inline size_t quantum() const;
     size_t availableToWriteBytes() const;
     size_t availableToReadBytes() const;
 
@@ -466,6 +529,7 @@ struct MessageQueueBase {
     void* mapGrantorDescr(uint32_t grantorIdx);
     void unmapGrantorDescr(void* address, uint32_t grantorIdx);
     void initMemory(bool resetPointers);
+    bool processOverflow(uint64_t readPtr, uint64_t writePtr) const;
 
     enum DefaultEventNotification : uint32_t {
         /*
@@ -490,6 +554,10 @@ struct MessageQueueBase {
      * lifetime.
      */
     android::hardware::EventFlag* mEventFlag = nullptr;
+
+    ErrorHandler mErrorHandler;
+
+    const size_t kPageSize = getpagesize();
 };
 
 template <template <typename, MQFlavor> typename MQDescriptorType, typename T, MQFlavor flavor>
@@ -546,6 +614,19 @@ template <template <typename, MQFlavor> typename MQDescriptorType, typename T, M
 bool MessageQueueBase<MQDescriptorType, T, flavor>::MemTransaction::copyFrom(T* data,
                                                                              size_t startIdx,
                                                                              size_t nMessages) {
+    if constexpr (!std::is_same<T, MQErased>::value) {
+        return copyFromSized(data, startIdx, nMessages, kQuantumValue<T>);
+    } else {
+        /* Compile error. */
+        static_assert(!std::is_same<T, MQErased>::value,
+                      "copyFrom without messageSize argument cannot be used with MQErased (use "
+                      "copyFromSized)");
+    }
+}
+
+template <template <typename, MQFlavor> typename MQDescriptorType, typename T, MQFlavor flavor>
+bool MessageQueueBase<MQDescriptorType, T, flavor>::MemTransaction::copyFromSized(
+        T* data, size_t startIdx, size_t nMessages, size_t messageSize) {
     if (data == nullptr) {
         return false;
     }
@@ -563,11 +644,11 @@ bool MessageQueueBase<MQDescriptorType, T, flavor>::MemTransaction::copyFrom(T* 
     }
 
     if (firstReadCount != 0) {
-        memcpy(data, firstBaseAddress, firstReadCount * sizeof(T));
+        memcpy(data, firstBaseAddress, firstReadCount * messageSize);
     }
 
     if (secondReadCount != 0) {
-        memcpy(data + firstReadCount, secondBaseAddress, secondReadCount * sizeof(T));
+        memcpy(data + firstReadCount, secondBaseAddress, secondReadCount * messageSize);
     }
 
     return true;
@@ -577,6 +658,19 @@ template <template <typename, MQFlavor> typename MQDescriptorType, typename T, M
 bool MessageQueueBase<MQDescriptorType, T, flavor>::MemTransaction::copyTo(const T* data,
                                                                            size_t startIdx,
                                                                            size_t nMessages) {
+    if constexpr (!std::is_same<T, MQErased>::value) {
+        return copyToSized(data, startIdx, nMessages, kQuantumValue<T>);
+    } else {
+        /* Compile error. */
+        static_assert(!std::is_same<T, MQErased>::value,
+                      "copyTo without messageSize argument cannot be used with MQErased (use "
+                      "copyToSized)");
+    }
+}
+
+template <template <typename, MQFlavor> typename MQDescriptorType, typename T, MQFlavor flavor>
+bool MessageQueueBase<MQDescriptorType, T, flavor>::MemTransaction::copyToSized(
+        const T* data, size_t startIdx, size_t nMessages, size_t messageSize) {
     if (data == nullptr) {
         return false;
     }
@@ -594,11 +688,11 @@ bool MessageQueueBase<MQDescriptorType, T, flavor>::MemTransaction::copyTo(const
     }
 
     if (firstWriteCount != 0) {
-        memcpy(firstBaseAddress, data, firstWriteCount * sizeof(T));
+        memcpy(firstBaseAddress, data, firstWriteCount * messageSize);
     }
 
     if (secondWriteCount != 0) {
-        memcpy(secondBaseAddress, data + firstWriteCount, secondWriteCount * sizeof(T));
+        memcpy(secondBaseAddress, data + firstWriteCount, secondWriteCount * messageSize);
     }
 
     return true;
@@ -614,17 +708,11 @@ void MessageQueueBase<MQDescriptorType, T, flavor>::initMemory(bool resetPointer
         (mDesc->countGrantors() < hardware::details::kMinGrantorCount)) {
         return;
     }
-    if (mDesc->getQuantum() != sizeof(T)) {
+    if (mDesc->getQuantum() != quantum()) {
         hardware::details::logError(
                 "Payload size differs between the queue instantiation and the "
                 "MQDescriptor.");
         return;
-    }
-
-    const auto& grantors = mDesc->grantors();
-    for (const auto& grantor : grantors) {
-        hardware::details::check(hardware::details::isAlignedToWordBoundary(grantor.offset) == true,
-                                 "Grantor offsets need to be aligned");
     }
 
     if (flavor == kSynchronizedReadWrite) {
@@ -637,11 +725,11 @@ void MessageQueueBase<MQDescriptorType, T, flavor>::initMemory(bool resetPointer
          */
         mReadPtr = new (std::nothrow) std::atomic<uint64_t>;
     }
-    hardware::details::check(mReadPtr != nullptr, "mReadPtr is null");
+    if (mReadPtr == nullptr) goto error;
 
     mWritePtr = reinterpret_cast<std::atomic<uint64_t>*>(
             mapGrantorDescr(hardware::details::WRITEPTRPOS));
-    hardware::details::check(mWritePtr != nullptr, "mWritePtr is null");
+    if (mWritePtr == nullptr) goto error;
 
     if (resetPointers) {
         mReadPtr->store(0, std::memory_order_release);
@@ -652,13 +740,31 @@ void MessageQueueBase<MQDescriptorType, T, flavor>::initMemory(bool resetPointer
     }
 
     mRing = reinterpret_cast<uint8_t*>(mapGrantorDescr(hardware::details::DATAPTRPOS));
-    hardware::details::check(mRing != nullptr, "mRing is null");
+    if (mRing == nullptr) goto error;
 
     if (mDesc->countGrantors() > hardware::details::EVFLAGWORDPOS) {
         mEvFlagWord = static_cast<std::atomic<uint32_t>*>(
                 mapGrantorDescr(hardware::details::EVFLAGWORDPOS));
-        hardware::details::check(mEvFlagWord != nullptr, "mEvFlagWord is null");
+        if (mEvFlagWord == nullptr) goto error;
         android::hardware::EventFlag::createEventFlag(mEvFlagWord, &mEventFlag);
+    }
+    return;
+error:
+    if (mReadPtr) {
+        if (flavor == kSynchronizedReadWrite) {
+            unmapGrantorDescr(mReadPtr, hardware::details::READPTRPOS);
+        } else {
+            delete mReadPtr;
+        }
+        mReadPtr = nullptr;
+    }
+    if (mWritePtr) {
+        unmapGrantorDescr(mWritePtr, hardware::details::WRITEPTRPOS);
+        mWritePtr = nullptr;
+    }
+    if (mRing) {
+        unmapGrantorDescr(mRing, hardware::details::EVFLAGWORDPOS);
+        mRing = nullptr;
     }
 }
 
@@ -666,7 +772,8 @@ template <template <typename, MQFlavor> typename MQDescriptorType, typename T, M
 MessageQueueBase<MQDescriptorType, T, flavor>::MessageQueueBase(const Descriptor& Desc,
                                                                 bool resetPointers) {
     mDesc = std::unique_ptr<Descriptor>(new (std::nothrow) Descriptor(Desc));
-    if (mDesc == nullptr) {
+    if (mDesc == nullptr || mDesc->getSize() == 0) {
+        hardware::details::logError("MQDescriptor is invalid or queue size is 0.");
         return;
     }
 
@@ -683,23 +790,31 @@ template <template <typename, MQFlavor> typename MQDescriptorType, typename T, M
 MessageQueueBase<MQDescriptorType, T, flavor>::MessageQueueBase(size_t numElementsInQueue,
                                                                 bool configureEventFlagWord,
                                                                 android::base::unique_fd bufferFd,
+<<<<<<< HEAD
 #ifdef _MSC_VER
                                                                 size_t bufferSize,
                                                                 std::string name) {
 #else
                                                                 size_t bufferSize) {
 #endif
+=======
+                                                                size_t bufferSize, size_t quantum) {
+>>>>>>> 208ef36
     // Check if the buffer size would not overflow size_t
-    if (numElementsInQueue > SIZE_MAX / sizeof(T)) {
+    if (numElementsInQueue > SIZE_MAX / quantum) {
         hardware::details::logError("Requested message queue size too large. Size of elements: " +
-                                    std::to_string(sizeof(T)) +
+                                    std::to_string(quantum) +
                                     ". Number of elements: " + std::to_string(numElementsInQueue));
         return;
     }
-    if (bufferFd != -1 && numElementsInQueue * sizeof(T) > bufferSize) {
+    if (numElementsInQueue == 0) {
+        hardware::details::logError("Requested queue size of 0.");
+        return;
+    }
+    if (bufferFd != -1 && numElementsInQueue * quantum > bufferSize) {
         hardware::details::logError("The supplied buffer size(" + std::to_string(bufferSize) +
                                     ") is smaller than the required size(" +
-                                    std::to_string(numElementsInQueue * sizeof(T)) + ").");
+                                    std::to_string(numElementsInQueue * quantum) + ").");
         return;
     }
     /*
@@ -707,7 +822,7 @@ MessageQueueBase<MQDescriptorType, T, flavor>::MessageQueueBase(size_t numElemen
      * read and write pointer counters. If an EventFlag word is to be configured,
      * we also need to allocate memory for the same/
      */
-    size_t kQueueSizeBytes = numElementsInQueue * sizeof(T);
+    size_t kQueueSizeBytes = numElementsInQueue * quantum;
     size_t kMetaDataSize = 2 * sizeof(android::hardware::details::RingBufferPosition);
 
     if (configureEventFlagWord) {
@@ -723,12 +838,12 @@ MessageQueueBase<MQDescriptorType, T, flavor>::MessageQueueBase(size_t numElemen
     if (bufferFd != -1) {
         // Allocate read counter and write counter only. User-supplied memory will be used for the
         // ringbuffer.
-        kAshmemSizePageAligned = (kMetaDataSize + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+        kAshmemSizePageAligned = (kMetaDataSize + kPageSize - 1) & ~(kPageSize - 1);
     } else {
         // Allocate ringbuffer, read counter and write counter.
         kAshmemSizePageAligned = (hardware::details::alignToWordBoundary(kQueueSizeBytes) +
-                                  kMetaDataSize + PAGE_SIZE - 1) &
-                                 ~(PAGE_SIZE - 1);
+                                  kMetaDataSize + kPageSize - 1) &
+                                 ~(kPageSize - 1);
     }
 
     /*
@@ -798,13 +913,17 @@ MessageQueueBase<MQDescriptorType, T, flavor>::MessageQueueBase(size_t numElemen
         }
 
         mDesc = std::unique_ptr<Descriptor>(new (std::nothrow)
-                                                    Descriptor(grantors, mqHandle, sizeof(T)));
+                                                    Descriptor(grantors, mqHandle, quantum));
     } else {
         mDesc = std::unique_ptr<Descriptor>(new (std::nothrow) Descriptor(
+<<<<<<< HEAD
                 kQueueSizeBytes, mqHandle, sizeof(T), configureEventFlagWord));
 #ifdef _MSC_VER
         mDesc->setName( name );
 #endif
+=======
+                kQueueSizeBytes, mqHandle, quantum, configureEventFlagWord));
+>>>>>>> 208ef36
     }
     if (mDesc == nullptr) {
         native_handle_close(mqHandle);
@@ -816,10 +935,10 @@ MessageQueueBase<MQDescriptorType, T, flavor>::MessageQueueBase(size_t numElemen
 
 template <template <typename, MQFlavor> typename MQDescriptorType, typename T, MQFlavor flavor>
 MessageQueueBase<MQDescriptorType, T, flavor>::~MessageQueueBase() {
-    if (flavor == kUnsynchronizedWrite && mReadPtr != nullptr) {
-        delete mReadPtr;
-    } else if (mReadPtr != nullptr) {
+    if (flavor == kSynchronizedReadWrite && mReadPtr != nullptr) {
         unmapGrantorDescr(mReadPtr, hardware::details::READPTRPOS);
+    } else if (mReadPtr != nullptr) {
+        delete mReadPtr;
     }
     if (mWritePtr != nullptr) {
         unmapGrantorDescr(mWritePtr, hardware::details::WRITEPTRPOS);
@@ -846,8 +965,8 @@ bool MessageQueueBase<MQDescriptorType, T, flavor>::read(T* data) {
 template <template <typename, MQFlavor> typename MQDescriptorType, typename T, MQFlavor flavor>
 bool MessageQueueBase<MQDescriptorType, T, flavor>::write(const T* data, size_t nMessages) {
     MemTransaction tx;
-    return beginWrite(nMessages, &tx) && tx.copyTo(data, 0 /* startIdx */, nMessages) &&
-           commitWrite(nMessages);
+    return beginWrite(nMessages, &tx) &&
+           tx.copyToSized(data, 0 /* startIdx */, nMessages, quantum()) && commitWrite(nMessages);
 }
 
 template <template <typename, MQFlavor> typename MQDescriptorType, typename T, MQFlavor flavor>
@@ -1083,18 +1202,40 @@ bool MessageQueueBase<MQDescriptorType, T, flavor>::readBlocking(T* data, size_t
 }
 
 template <template <typename, MQFlavor> typename MQDescriptorType, typename T, MQFlavor flavor>
+inline size_t MessageQueueBase<MQDescriptorType, T, flavor>::quantum() const {
+    if constexpr (std::is_same<T, MQErased>::value) {
+        return mDesc->getQuantum();
+    } else {
+        return kQuantumValue<T>;
+    }
+}
+
+template <template <typename, MQFlavor> typename MQDescriptorType, typename T, MQFlavor flavor>
 size_t MessageQueueBase<MQDescriptorType, T, flavor>::availableToWriteBytes() const {
-    return mDesc->getSize() - availableToReadBytes();
+    size_t queueSizeBytes = mDesc->getSize();
+    size_t availableBytes = availableToReadBytes();
+    if (queueSizeBytes < availableBytes) {
+        std::string errorMsg =
+                "The write or read pointer has become corrupted. Writing to the queue is no "
+                "longer possible. Queue size: " +
+                std::to_string(queueSizeBytes) + ", available: " + std::to_string(availableBytes);
+        hardware::details::logError(errorMsg);
+        if (mErrorHandler) {
+            mErrorHandler(Error::POINTER_CORRUPTION, std::move(errorMsg));
+        }
+        return 0;
+    }
+    return queueSizeBytes - availableBytes;
 }
 
 template <template <typename, MQFlavor> typename MQDescriptorType, typename T, MQFlavor flavor>
 size_t MessageQueueBase<MQDescriptorType, T, flavor>::availableToWrite() const {
-    return availableToWriteBytes() / sizeof(T);
+    return availableToWriteBytes() / quantum();
 }
 
 template <template <typename, MQFlavor> typename MQDescriptorType, typename T, MQFlavor flavor>
 size_t MessageQueueBase<MQDescriptorType, T, flavor>::availableToRead() const {
-    return availableToReadBytes() / sizeof(T);
+    return availableToReadBytes() / quantum();
 }
 
 template <template <typename, MQFlavor> typename MQDescriptorType, typename T, MQFlavor flavor>
@@ -1112,11 +1253,16 @@ bool MessageQueueBase<MQDescriptorType, T, flavor>::beginWrite(size_t nMessages,
     }
 
     auto writePtr = mWritePtr->load(std::memory_order_relaxed);
-    if (writePtr % sizeof(T) != 0) {
-        hardware::details::logError(
-                "The write pointer has become misaligned. Writing to the queue is no longer "
-                "possible.");
+    if (writePtr % quantum() != 0) {
+        std::string errorMsg =
+                "The write pointer has become misaligned. Writing to the queue is not possible. "
+                "Pointer: " +
+                std::to_string(writePtr) + ", quantum: " + std::to_string(quantum());
+        hardware::details::logError(errorMsg);
         hardware::details::errorWriteLog(0x534e4554, "184963385");
+        if (mErrorHandler) {
+            mErrorHandler(Error::POINTER_CORRUPTION, std::move(errorMsg));
+        }
         return false;
     }
     size_t writeOffset = writePtr % mDesc->getSize();
@@ -1125,7 +1271,7 @@ bool MessageQueueBase<MQDescriptorType, T, flavor>::beginWrite(size_t nMessages,
      * From writeOffset, the number of messages that can be written
      * contiguously without wrapping around the ring buffer are calculated.
      */
-    size_t contiguousMessages = (mDesc->getSize() - writeOffset) / sizeof(T);
+    size_t contiguousMessages = (mDesc->getSize() - writeOffset) / quantum();
 
     if (contiguousMessages < nMessages) {
         /*
@@ -1154,7 +1300,7 @@ template <template <typename, MQFlavor> typename MQDescriptorType, typename T, M
  */
 /*__attribute__((no_sanitize("integer")))*/ bool
 MessageQueueBase<MQDescriptorType, T, flavor>::commitWrite(size_t nMessages) {
-    size_t nBytesWritten = nMessages * sizeof(T);
+    size_t nBytesWritten = nMessages * quantum();
     auto writePtr = mWritePtr->load(std::memory_order_relaxed);
     writePtr += nBytesWritten;
     mWritePtr->store(writePtr, std::memory_order_release);
@@ -1172,14 +1318,49 @@ size_t MessageQueueBase<MQDescriptorType, T, flavor>::availableToReadBytes() con
      * hence requires a memory_order_acquired load for both mReadPtr and
      * mWritePtr.
      */
-    return mWritePtr->load(std::memory_order_acquire) - mReadPtr->load(std::memory_order_acquire);
+    uint64_t writePtr = mWritePtr->load(std::memory_order_acquire);
+    uint64_t readPtr = mReadPtr->load(std::memory_order_acquire);
+    if (writePtr < readPtr) {
+        std::string errorMsg =
+                "The write or read pointer has become corrupted. Reading from the queue is no "
+                "longer possible. Write pointer: " +
+                std::to_string(writePtr) + ", read pointer: " + std::to_string(readPtr);
+        hardware::details::logError(errorMsg);
+        if (mErrorHandler) {
+            mErrorHandler(Error::POINTER_CORRUPTION, std::move(errorMsg));
+        }
+        return 0;
+    }
+    return writePtr - readPtr;
 }
 
 template <template <typename, MQFlavor> typename MQDescriptorType, typename T, MQFlavor flavor>
 bool MessageQueueBase<MQDescriptorType, T, flavor>::read(T* data, size_t nMessages) {
     MemTransaction tx;
-    return beginRead(nMessages, &tx) && tx.copyFrom(data, 0 /* startIdx */, nMessages) &&
-           commitRead(nMessages);
+    return beginRead(nMessages, &tx) &&
+           tx.copyFromSized(data, 0 /* startIdx */, nMessages, quantum()) && commitRead(nMessages);
+}
+
+template <template <typename, MQFlavor> typename MQDescriptorType, typename T, MQFlavor flavor>
+/*
+ * Disable integer sanitization since integer overflow here is allowed
+ * and legal.
+ */
+__attribute__((no_sanitize("integer"))) bool
+MessageQueueBase<MQDescriptorType, T, flavor>::processOverflow(uint64_t readPtr,
+                                                               uint64_t writePtr) const {
+    if (writePtr - readPtr > mDesc->getSize()) {
+        /*
+         * Preserved history can be as big as mDesc->getSize() but we expose only half of that.
+         * Half of the buffer will be discarded to make space for fast writers and
+         * reduce chance of repeated overflows. The other half is available to read.
+         */
+        size_t historyOffset = getQuantumCount() / 2 * getQuantumSize();
+        mReadPtr->store(writePtr - historyOffset, std::memory_order_release);
+        hardware::details::logError("Read failed after an overflow. Resetting read pointer.");
+        return true;
+    }
+    return false;
 }
 
 template <template <typename, MQFlavor> typename MQDescriptorType, typename T, MQFlavor flavor>
@@ -1204,7 +1385,7 @@ MessageQueueBase<MQDescriptorType, T, flavor>::beginRead(size_t nMessages,
      * stores to mReadPtr from a different thread.
      */
     auto readPtr = mReadPtr->load(std::memory_order_relaxed);
-    if (writePtr % sizeof(T) != 0 || readPtr % sizeof(T) != 0) {
+    if (writePtr % quantum() != 0 || readPtr % quantum() != 0) {
         hardware::details::logError(
                 "The write or read pointer has become misaligned. Reading from the queue is no "
                 "longer possible.");
@@ -1212,12 +1393,11 @@ MessageQueueBase<MQDescriptorType, T, flavor>::beginRead(size_t nMessages,
         return false;
     }
 
-    if (writePtr - readPtr > mDesc->getSize()) {
-        mReadPtr->store(writePtr, std::memory_order_release);
+    if (processOverflow(readPtr, writePtr)) {
         return false;
     }
 
-    size_t nBytesDesired = nMessages * sizeof(T);
+    size_t nBytesDesired = nMessages * quantum();
     /*
      * Return if insufficient data to read in FMQ.
      */
@@ -1230,7 +1410,7 @@ MessageQueueBase<MQDescriptorType, T, flavor>::beginRead(size_t nMessages,
      * From readOffset, the number of messages that can be read contiguously
      * without wrapping around the ring buffer are calculated.
      */
-    size_t contiguousMessages = (mDesc->getSize() - readOffset) / sizeof(T);
+    size_t contiguousMessages = (mDesc->getSize() - readOffset) / quantum();
 
     if (contiguousMessages < nMessages) {
         /*
@@ -1262,16 +1442,16 @@ MessageQueueBase<MQDescriptorType, T, flavor>::commitRead(size_t nMessages) {
     // TODO: Use a local copy of readPtr to avoid relazed mReadPtr loads.
     auto readPtr = mReadPtr->load(std::memory_order_relaxed);
     auto writePtr = mWritePtr->load(std::memory_order_acquire);
+
     /*
      * If the flavor is unsynchronized, it is possible that a write overflow may
      * have occurred between beginRead() and commitRead().
      */
-    if (writePtr - readPtr > mDesc->getSize()) {
-        mReadPtr->store(writePtr, std::memory_order_release);
+    if (processOverflow(readPtr, writePtr)) {
         return false;
     }
 
-    size_t nBytesRead = nMessages * sizeof(T);
+    size_t nBytesRead = nMessages * quantum();
     readPtr += nBytesRead;
     mReadPtr->store(readPtr, std::memory_order_release);
     return true;
@@ -1295,7 +1475,7 @@ bool MessageQueueBase<MQDescriptorType, T, flavor>::isValid() const {
 template <template <typename, MQFlavor> typename MQDescriptorType, typename T, MQFlavor flavor>
 void* MessageQueueBase<MQDescriptorType, T, flavor>::mapGrantorDescr(uint32_t grantorIdx) {
     const native_handle_t* handle = mDesc->handle();
-    auto grantors = mDesc->grantors();
+    const std::vector<android::hardware::GrantorDescriptor> grantors = mDesc->grantors();
     if (handle == nullptr) {
         hardware::details::logError("mDesc->handle is null");
         return nullptr;
@@ -1308,14 +1488,66 @@ void* MessageQueueBase<MQDescriptorType, T, flavor>::mapGrantorDescr(uint32_t gr
     }
 
     int fdIndex = grantors[grantorIdx].fdIndex;
+    if (fdIndex < 0 || fdIndex >= handle->numFds) {
+        hardware::details::logError(
+                std::string("fdIndex (" + std::to_string(fdIndex) + ") from grantor (index " +
+                            std::to_string(grantorIdx) +
+                            ") must be smaller than the number of fds in the handle: " +
+                            std::to_string(handle->numFds)));
+        return nullptr;
+    }
+
     /*
-     * Offset for mmap must be a multiple of PAGE_SIZE.
+     * Offset for mmap must be a multiple of kPageSize.
      */
-    int mapOffset = (grantors[grantorIdx].offset / PAGE_SIZE) * PAGE_SIZE;
+    if (!hardware::details::isAlignedToWordBoundary(grantors[grantorIdx].offset)) {
+        hardware::details::logError("Grantor (index " + std::to_string(grantorIdx) +
+                                    ") offset needs to be aligned to word boundary but is: " +
+                                    std::to_string(grantors[grantorIdx].offset));
+        return nullptr;
+    }
+
+    /*
+     * Expect some grantors to be at least a min size
+     */
+    for (uint32_t i = 0; i < grantors.size(); i++) {
+        switch (i) {
+            case hardware::details::READPTRPOS:
+                if (grantors[i].extent < sizeof(uint64_t)) return nullptr;
+                break;
+            case hardware::details::WRITEPTRPOS:
+                if (grantors[i].extent < sizeof(uint64_t)) return nullptr;
+                break;
+            case hardware::details::DATAPTRPOS:
+                // We don't expect specific data size
+                break;
+            case hardware::details::EVFLAGWORDPOS:
+                if (grantors[i].extent < sizeof(uint32_t)) return nullptr;
+                break;
+            default:
+                // We don't care about unknown grantors
+                break;
+        }
+    }
+
+    int mapOffset = (grantors[grantorIdx].offset / kPageSize) * kPageSize;
+    if (grantors[grantorIdx].extent < 0 || grantors[grantorIdx].extent > INT_MAX - kPageSize) {
+        hardware::details::logError(std::string("Grantor (index " + std::to_string(grantorIdx) +
+                                                ") extent value is too large or negative: " +
+                                                std::to_string(grantors[grantorIdx].extent)));
+        return nullptr;
+    }
     int mapLength = grantors[grantorIdx].offset - mapOffset + grantors[grantorIdx].extent;
 
     void* address = system_porting::system_porting_mmap(0, mapLength, PROT_READ | PROT_WRITE, MAP_SHARED, handle->data[fdIndex],
                          mapOffset);
+    if (address == MAP_FAILED && errno == EPERM && flavor == kUnsynchronizedWrite) {
+        // If the supplied memory is read-only, it would fail with EPERM.
+        // Try again to mmap read-only for the kUnsynchronizedWrite case.
+        // kSynchronizedReadWrite cannot use read-only memory because the
+        // read pointer is stored in the shared memory as well.
+        address = mmap(0, mapLength, PROT_READ, MAP_SHARED, handle->data[fdIndex], mapOffset);
+    }
     if (address == MAP_FAILED) {
         hardware::details::logError(std::string("mmap failed: ") + std::to_string(errno));
         return nullptr;
@@ -1331,11 +1563,11 @@ void MessageQueueBase<MQDescriptorType, T, flavor>::unmapGrantorDescr(void* addr
         return;
     }
 
-    int mapOffset = (grantors[grantorIdx].offset / PAGE_SIZE) * PAGE_SIZE;
+    int mapOffset = (grantors[grantorIdx].offset / kPageSize) * kPageSize;
     int mapLength = grantors[grantorIdx].offset - mapOffset + grantors[grantorIdx].extent;
     void* baseAddress =
             reinterpret_cast<uint8_t*>(address) - (grantors[grantorIdx].offset - mapOffset);
     if (baseAddress) system_porting::system_porting_munmap(baseAddress, mapLength);
 }
 
-}  // namespace hardware
+}  // namespace android

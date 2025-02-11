@@ -25,11 +25,17 @@
 #include <android-base/logging.h>
 #include <android/binder_manager.h>
 #include <android/binder_process.h>
+#include <android/fmq/test/FixedParcelable.h>
+#include <android/fmq/test/FixedUnion.h>
+#include <android/fmq/test/ITestAidlMsgQ.h>
 #include <android/hardware/tests/msgq/1.0/ITestMsgQ.h>
 #include <fmq/AidlMessageQueue.h>
+#include <fmq/AidlMessageQueueCpp.h>
 #include <fmq/EventFlag.h>
 #include <fmq/MessageQueue.h>
 #include <hidl/ServiceManagement.h>
+
+#include <binder/IServiceManager.h>
 
 // libutils:
 using android::OK;
@@ -41,9 +47,22 @@ using ::aidl::android::fmq::test::EventFlagBits;
 using ::aidl::android::fmq::test::FixedParcelable;
 using ::aidl::android::fmq::test::FixedUnion;
 using ::aidl::android::fmq::test::ITestAidlMsgQ;
+
+using cppEventFlagBits = ::android::fmq::test::EventFlagBits;
+using cppFixedParcelable = android::fmq::test::FixedParcelable;
+using cppFixedUnion = android::fmq::test::FixedUnion;
+using cppITestAidlMsgQ = ::android::fmq::test::ITestAidlMsgQ;
+
 using android::hardware::tests::msgq::V1_0::ITestMsgQ;
+static_assert(static_cast<uint32_t>(ITestMsgQ::EventFlagBits::FMQ_NOT_FULL) ==
+                      static_cast<uint32_t>(EventFlagBits::FMQ_NOT_FULL),
+              "The AIDL and HIDL test interfaces must use the same values!");
+static_assert(static_cast<uint32_t>(ITestMsgQ::EventFlagBits::FMQ_NOT_EMPTY) ==
+                      static_cast<uint32_t>(EventFlagBits::FMQ_NOT_EMPTY),
+              "The AIDL and HIDL test interfaces must use the same values!");
 
 // libhidl
+using android::hardware::isHidlSupported;
 using android::hardware::kSynchronizedReadWrite;
 using android::hardware::kUnsynchronizedWrite;
 using android::hardware::MessageQueue;
@@ -53,15 +72,21 @@ using android::hardware::details::waitForHwService;
 
 using aidl::android::hardware::common::fmq::SynchronizedReadWrite;
 using aidl::android::hardware::common::fmq::UnsynchronizedWrite;
+using cppSynchronizedReadWrite = ::android::hardware::common::fmq::SynchronizedReadWrite;
+using cppUnSynchronizedWrite = android::hardware::common::fmq::UnsynchronizedWrite;
 using android::hardware::kSynchronizedReadWrite;
 using android::hardware::kUnsynchronizedWrite;
 
 typedef android::AidlMessageQueue<int32_t, SynchronizedReadWrite> AidlMessageQueueSync;
 typedef android::AidlMessageQueue<int32_t, UnsynchronizedWrite> AidlMessageQueueUnsync;
+
+typedef android::AidlMessageQueueCpp<int32_t, cppSynchronizedReadWrite> cppAidlMessageQueueSync;
+typedef android::AidlMessageQueueCpp<int32_t, cppUnSynchronizedWrite> cppAidlMessageQueueUnsync;
+
 typedef android::hardware::MessageQueue<int32_t, kSynchronizedReadWrite> MessageQueueSync;
 typedef android::hardware::MessageQueue<int32_t, kUnsynchronizedWrite> MessageQueueUnsync;
-static const std::string kServiceName = "BnTestAidlMsgQ";
-static constexpr size_t kNumElementsInSyncQueue = (PAGE_SIZE - 16) / sizeof(int32_t);
+static const size_t kPageSize = getpagesize();
+static const size_t kNumElementsInSyncQueue = (kPageSize - 16) / sizeof(int32_t);
 
 enum class SetupType {
     SINGLE_FD,
@@ -77,13 +102,17 @@ class TestParamTypes {
 
 // Run everything on both the AIDL and HIDL versions with one and two FDs
 typedef ::testing::Types<TestParamTypes<AidlMessageQueueSync, SetupType::SINGLE_FD>,
+                         TestParamTypes<cppAidlMessageQueueSync, SetupType::SINGLE_FD>,
                          TestParamTypes<MessageQueueSync, SetupType::SINGLE_FD>,
                          TestParamTypes<AidlMessageQueueSync, SetupType::DOUBLE_FD>,
+                         TestParamTypes<cppAidlMessageQueueSync, SetupType::DOUBLE_FD>,
                          TestParamTypes<MessageQueueSync, SetupType::DOUBLE_FD>>
         SyncTypes;
 typedef ::testing::Types<TestParamTypes<AidlMessageQueueUnsync, SetupType::SINGLE_FD>,
+                         TestParamTypes<cppAidlMessageQueueUnsync, SetupType::SINGLE_FD>,
                          TestParamTypes<MessageQueueUnsync, SetupType::SINGLE_FD>,
                          TestParamTypes<AidlMessageQueueUnsync, SetupType::DOUBLE_FD>,
+                         TestParamTypes<cppAidlMessageQueueUnsync, SetupType::DOUBLE_FD>,
                          TestParamTypes<MessageQueueUnsync, SetupType::DOUBLE_FD>>
         UnsyncTypes;
 
@@ -97,7 +126,10 @@ class ClientSyncTestBase<AidlMessageQueueSync> : public ::testing::Test {
     static std::shared_ptr<ITestAidlMsgQ> waitGetTestService() {
         const std::string instance = std::string() + ITestAidlMsgQ::descriptor + "/default";
         ndk::SpAIBinder binder(AServiceManager_getService(instance.c_str()));
-        return ITestAidlMsgQ::fromBinder(binder);
+        CHECK(nullptr != binder);
+        auto ret = ITestAidlMsgQ::fromBinder(binder);
+        CHECK(ret->isRemote() == true);
+        return ret;
     }
     bool configureFmqSyncReadWrite(AidlMessageQueueSync* mq) {
         bool result = false;
@@ -118,16 +150,57 @@ class ClientSyncTestBase<AidlMessageQueueSync> : public ::testing::Test {
     std::shared_ptr<ITestAidlMsgQ> mService;
 };
 
+// Specialize for AIDL cpp backend
+template <>
+class ClientSyncTestBase<cppAidlMessageQueueSync> : public ::testing::Test {
+  protected:
+    static sp<cppITestAidlMsgQ> waitGetTestService() {
+        const std::string instance = std::string() + ITestAidlMsgQ::descriptor + "/default";
+        const android::String16 instanceString16(instance.c_str());
+        sp<cppITestAidlMsgQ> binder;
+        status_t err = getService(instanceString16, &binder);
+        if (err != OK) {
+            return nullptr;
+        }
+        CHECK(nullptr != binder);
+        return binder;
+    }
+    bool configureFmqSyncReadWrite(cppAidlMessageQueueSync* mq) {
+        bool result = false;
+        auto ret = mService->configureFmqSyncReadWrite(mq->dupeDesc(), &result);
+        return result && ret.isOk();
+    }
+    bool requestReadFmqSync(size_t dataLen) {
+        bool result = false;
+        auto ret = mService->requestReadFmqSync(dataLen, &result);
+        return result && ret.isOk();
+    }
+    bool requestWriteFmqSync(size_t dataLen) {
+        bool result = false;
+        auto ret = mService->requestWriteFmqSync(dataLen, &result);
+        return result && ret.isOk();
+    }
+
+    sp<cppITestAidlMsgQ> mService;
+};
+
 // Specialize for HIDL
 template <>
 class ClientSyncTestBase<MessageQueueSync> : public ::testing::Test {
   protected:
     static sp<ITestMsgQ> waitGetTestService() {
-        android::hardware::details::setTrebleTestingOverride(true);
-        // waitForHwService is required because ITestMsgQ is not in manifest.xml.
-        // "Real" HALs shouldn't be doing this.
-        waitForHwService(ITestMsgQ::descriptor, "default");
-        return ITestMsgQ::getService();
+        if (isHidlSupported()) {
+            android::hardware::details::setTrebleTestingOverride(true);
+            // waitForHwService is required because ITestMsgQ is not in manifest.xml.
+            // "Real" HALs shouldn't be doing this.
+            waitForHwService(ITestMsgQ::descriptor, "default");
+            sp<ITestMsgQ> service = ITestMsgQ::getService();
+            CHECK(nullptr != service);
+            CHECK(service->isRemote() == true);
+            return service;
+        } else {
+            return nullptr;
+        }
     }
     bool configureFmqSyncReadWrite(MessageQueueSync* mq) {
         auto ret = mService->configureFmqSyncReadWrite(*mq->getDesc());
@@ -155,14 +228,17 @@ class ClientUnsyncTestBase<AidlMessageQueueUnsync> : public ::testing::Test {
     static std::shared_ptr<ITestAidlMsgQ> waitGetTestService() {
         const std::string instance = std::string() + ITestAidlMsgQ::descriptor + "/default";
         ndk::SpAIBinder binder(AServiceManager_getService(instance.c_str()));
-        return ITestAidlMsgQ::fromBinder(binder);
+        CHECK(nullptr != binder);
+        auto ret = ITestAidlMsgQ::fromBinder(binder);
+        CHECK(ret->isRemote() == true);
+        return ret;
     }
     bool getFmqUnsyncWrite(bool configureFmq, bool userFd, std::shared_ptr<ITestAidlMsgQ> service,
                            AidlMessageQueueUnsync** queue) {
         bool result = false;
         aidl::android::hardware::common::fmq::MQDescriptor<int32_t, UnsynchronizedWrite> desc;
         auto ret = service->getFmqUnsyncWrite(configureFmq, userFd, &desc, &result);
-        *queue = new (std::nothrow) AidlMessageQueueUnsync(desc);
+        *queue = new (std::nothrow) AidlMessageQueueUnsync(desc, false);
         return result && ret.isOk();
     }
 
@@ -186,7 +262,7 @@ class ClientUnsyncTestBase<AidlMessageQueueUnsync> : public ::testing::Test {
     }
     AidlMessageQueueUnsync* newQueue() {
         if (mQueue->isValid())
-            return new (std::nothrow) AidlMessageQueueUnsync(mQueue->dupeDesc());
+            return new (std::nothrow) AidlMessageQueueUnsync(mQueue->dupeDesc(), false);
         else
             return nullptr;
     }
@@ -195,16 +271,75 @@ class ClientUnsyncTestBase<AidlMessageQueueUnsync> : public ::testing::Test {
     AidlMessageQueueUnsync* mQueue = nullptr;
 };
 
+// Specialize for AIDL cpp backend
+template <>
+class ClientUnsyncTestBase<cppAidlMessageQueueUnsync> : public ::testing::Test {
+  protected:
+    static sp<cppITestAidlMsgQ> waitGetTestService() {
+        const std::string instance = std::string() + ITestAidlMsgQ::descriptor + "/default";
+        const android::String16 instanceString16(instance.c_str());
+        sp<cppITestAidlMsgQ> binder;
+        status_t err = getService(instanceString16, &binder);
+        if (err != OK) {
+            return nullptr;
+        }
+        CHECK(nullptr != binder);
+        return binder;
+    }
+    bool getFmqUnsyncWrite(bool configureFmq, bool userFd, sp<cppITestAidlMsgQ> service,
+                           cppAidlMessageQueueUnsync** queue) {
+        bool result = false;
+        android::hardware::common::fmq::MQDescriptor<int32_t, cppUnSynchronizedWrite> desc;
+        auto ret = service->getFmqUnsyncWrite(configureFmq, userFd, &desc, &result);
+        *queue = new (std::nothrow) cppAidlMessageQueueUnsync(desc, false);
+        return result && ret.isOk();
+    }
+
+    sp<cppITestAidlMsgQ> getQueue(cppAidlMessageQueueUnsync** fmq, bool setupQueue, bool userFd) {
+        sp<cppITestAidlMsgQ> service = waitGetTestService();
+        if (service == nullptr) return nullptr;
+        getFmqUnsyncWrite(setupQueue, userFd, service, fmq);
+        return service;
+    }
+
+    bool requestReadFmqUnsync(size_t dataLen, sp<cppITestAidlMsgQ> service) {
+        bool result = false;
+        auto ret = service->requestReadFmqUnsync(dataLen, &result);
+        return result && ret.isOk();
+    }
+    bool requestWriteFmqUnsync(size_t dataLen, sp<cppITestAidlMsgQ> service) {
+        bool result = false;
+        auto ret = service->requestWriteFmqUnsync(dataLen, &result);
+        return result && ret.isOk();
+    }
+    cppAidlMessageQueueUnsync* newQueue() {
+        if (mQueue->isValid())
+            return new (std::nothrow) cppAidlMessageQueueUnsync(mQueue->dupeDesc(), false);
+        else
+            return nullptr;
+    }
+
+    sp<cppITestAidlMsgQ> mService;
+    cppAidlMessageQueueUnsync* mQueue = nullptr;
+};
+
 // Specialize for HIDL
 template <>
 class ClientUnsyncTestBase<MessageQueueUnsync> : public ::testing::Test {
   protected:
     static sp<ITestMsgQ> waitGetTestService() {
-        android::hardware::details::setTrebleTestingOverride(true);
-        // waitForHwService is required because ITestMsgQ is not in manifest.xml.
-        // "Real" HALs shouldn't be doing this.
-        waitForHwService(ITestMsgQ::descriptor, "default");
-        return ITestMsgQ::getService();
+        if (isHidlSupported()) {
+            android::hardware::details::setTrebleTestingOverride(true);
+            // waitForHwService is required because ITestMsgQ is not in manifest.xml.
+            // "Real" HALs shouldn't be doing this.
+            waitForHwService(ITestMsgQ::descriptor, "default");
+            sp<ITestMsgQ> service = ITestMsgQ::getService();
+            CHECK(nullptr != service);
+            CHECK(service->isRemote() == true);
+            return service;
+        } else {
+            return nullptr;
+        }
     }
     bool getFmqUnsyncWrite(bool configureFmq, bool userFd, sp<ITestMsgQ> service,
                            MessageQueueUnsync** queue) {
@@ -214,7 +349,7 @@ class ClientUnsyncTestBase<MessageQueueUnsync> : public ::testing::Test {
         service->getFmqUnsyncWrite(configureFmq, userFd,
                                    [queue](bool ret, const MQDescriptorUnsync<int32_t>& in) {
                                        ASSERT_TRUE(ret);
-                                       *queue = new (std::nothrow) MessageQueueUnsync(in);
+                                       *queue = new (std::nothrow) MessageQueueUnsync(in, false);
                                    });
         return true;
     }
@@ -236,7 +371,7 @@ class ClientUnsyncTestBase<MessageQueueUnsync> : public ::testing::Test {
     }
 
     MessageQueueUnsync* newQueue() {
-        return new (std::nothrow) MessageQueueUnsync(*mQueue->getDesc());
+        return new (std::nothrow) MessageQueueUnsync(*mQueue->getDesc(), false);
     }
 
     sp<ITestMsgQ> mService;
@@ -257,8 +392,7 @@ class SynchronizedReadWriteClient : public ClientSyncTestBase<typename T::MQType
 
     virtual void SetUp() {
         this->mService = this->waitGetTestService();
-        ASSERT_NE(this->mService, nullptr);
-        ASSERT_TRUE(this->mService->isRemote());
+        if (this->mService == nullptr) GTEST_SKIP() << "HIDL is not supported";
         static constexpr size_t kSyncElementSizeBytes = sizeof(int32_t);
         android::base::unique_fd ringbufferFd;
         if (T::UserFd) {
@@ -288,8 +422,7 @@ class UnsynchronizedWriteClient : public ClientUnsyncTestBase<typename T::MQType
 
     virtual void SetUp() {
         this->mService = this->waitGetTestService();
-        ASSERT_NE(this->mService, nullptr);
-        ASSERT_TRUE(this->mService->isRemote());
+        if (this->mService == nullptr) GTEST_SKIP() << "HIDL is not supported";
         this->getFmqUnsyncWrite(true, false, this->mService, &this->mQueue);
         ASSERT_NE(nullptr, this->mQueue);
         ASSERT_TRUE(this->mQueue->isValid());
@@ -332,7 +465,6 @@ TYPED_TEST(UnsynchronizedWriteClientMultiProcess, MultipleReadersAfterOverflow) 
         auto service =
                 this->getQueue(&queue, true /* setupQueue */, TypeParam::UserFd /* userFd */);
         ASSERT_NE(service, nullptr);
-        ASSERT_TRUE(service->isRemote());
         ASSERT_NE(queue, nullptr);
         ASSERT_TRUE(queue->isValid());
 
@@ -359,7 +491,6 @@ TYPED_TEST(UnsynchronizedWriteClientMultiProcess, MultipleReadersAfterOverflow) 
 
         // Verify that the read is successful.
         ASSERT_TRUE(queue->read(&readData[0], dataLen));
-        ASSERT_TRUE(verifyData(&readData[0], dataLen));
 
         delete queue;
         exit(0);
@@ -376,7 +507,6 @@ TYPED_TEST(UnsynchronizedWriteClientMultiProcess, MultipleReadersAfterOverflow) 
         typename TypeParam::MQType* queue = nullptr;
         auto service = this->getQueue(&queue, false /* setupQueue */, false /* userFd */);
         ASSERT_NE(service, nullptr);
-        ASSERT_TRUE(service->isRemote());
         ASSERT_NE(queue, nullptr);
         ASSERT_TRUE(queue->isValid());
 
@@ -393,7 +523,6 @@ TYPED_TEST(UnsynchronizedWriteClientMultiProcess, MultipleReadersAfterOverflow) 
 
         // verify that the read is successful.
         ASSERT_TRUE(queue->read(&readData[0], dataLen));
-        ASSERT_TRUE(verifyData(&readData[0], dataLen));
 
         delete queue;
         exit(0);
@@ -425,7 +554,7 @@ TYPED_TEST(SynchronizedReadWriteClient, BlockingReadWrite1) {
         ASSERT_TRUE(ret);
     }
     {
-        std::array<int32_t, kNumElementsInSyncQueue> data = {0};
+        std::vector<int32_t> data(kNumElementsInSyncQueue, 0);
         ret = this->mQueue->writeBlocking(
                 data.data(), data.size(),
                 static_cast<uint32_t>(ITestMsgQ::EventFlagBits::FMQ_NOT_FULL),
@@ -464,7 +593,7 @@ TYPED_TEST(SynchronizedReadWriteClient, BlockingReadWrite2) {
      * kNumElementsInSyncQueue will succeed.
      */
     {
-        std::array<int32_t, kNumElementsInSyncQueue> data = {0};
+        std::vector<int32_t> data(kNumElementsInSyncQueue, 0);
         ret = this->mQueue->writeBlocking(data.data(), data.size(), 5000000000 /* timeOutNanos */);
         ASSERT_TRUE(ret);
     }
@@ -505,7 +634,7 @@ TYPED_TEST(SynchronizedReadWriteClient, BlockingReadWriteRepeat1) {
      * blocking write should be successful.
      */
     {
-        std::array<int32_t, kNumElementsInSyncQueue> data = {0};
+        std::vector<int32_t> data(kNumElementsInSyncQueue, 0);
         ret = this->mQueue->writeBlocking(
                 data.data(), data.size(),
                 static_cast<uint32_t>(ITestMsgQ::EventFlagBits::FMQ_NOT_FULL),
@@ -551,7 +680,7 @@ TYPED_TEST(SynchronizedReadWriteClient, BlockingReadWriteRepeat2) {
      * blocking write should be successful.
      */
     {
-        std::array<int32_t, kNumElementsInSyncQueue> data = {0};
+        std::vector<int32_t> data(kNumElementsInSyncQueue, 0);
         ret = this->mQueue->writeBlocking(
                 data.data(), data.size(),
                 static_cast<uint32_t>(ITestMsgQ::EventFlagBits::FMQ_NOT_FULL),
@@ -596,7 +725,7 @@ TYPED_TEST(SynchronizedReadWriteClient, BlockingReadWriteRepeat3) {
      * blocking write should be successful.
      */
     {
-        std::array<int32_t, kNumElementsInSyncQueue> data = {0};
+        std::vector<int32_t> data(kNumElementsInSyncQueue, 0);
         ret = this->mQueue->writeBlocking(
                 data.data(), data.size(),
                 static_cast<uint32_t>(ITestMsgQ::EventFlagBits::FMQ_NOT_FULL),
@@ -732,6 +861,69 @@ TYPED_TEST(SynchronizedReadWriteClient, SmallInputWriterTest1) {
 }
 
 /*
+ * Write a message to the queue, get a pointer to the memory region for that
+ * first message. Set the write counter to the last byte in the ring buffer.
+ * Try another write, it should fail because the write address is misaligned.
+ */
+TYPED_TEST(SynchronizedReadWriteClient, MisalignedWriteCounterClientSide) {
+    if (TypeParam::UserFd) {
+        // When using the second FD for the ring buffer, we can't get to the read/write
+        // counters from a pointer to the ring buffer, so no sense in testing.
+        GTEST_SKIP();
+    }
+
+    bool errorCallbackTriggered = false;
+    auto errorHandler = [&errorCallbackTriggered](TypeParam::MQType::Error error, std::string&&) {
+        if (error == TypeParam::MQType::Error::POINTER_CORRUPTION) {
+            errorCallbackTriggered = true;
+        }
+    };
+    this->mQueue->setErrorHandler(errorHandler);
+    EXPECT_FALSE(errorCallbackTriggered);
+
+    const size_t dataLen = 1;
+    ASSERT_LE(dataLen, kNumElementsInSyncQueue);
+    int32_t data[dataLen];
+    initData(data, dataLen);
+    // begin write and get a MemTransaction object for the first object in the queue
+    typename TypeParam::MQType::MemTransaction tx;
+    ASSERT_TRUE(this->mQueue->beginWrite(dataLen, &tx));
+    EXPECT_FALSE(errorCallbackTriggered);
+
+    // get a pointer to the beginning of the ring buffer
+    const auto& region = tx.getFirstRegion();
+    int32_t* firstStart = region.getAddress();
+
+    // because this is the first location in the ring buffer, we can get
+    // access to the read and write pointer stored in the fd. 8 bytes back for the
+    // write counter and 16 bytes back for the read counter
+    uint64_t* writeCntr = (uint64_t*)((uint8_t*)firstStart - 8);
+
+    // set it to point to the very last byte in the ring buffer
+    *(writeCntr) = this->mQueue->getQuantumCount() * this->mQueue->getQuantumSize() - 1;
+    ASSERT_TRUE(*writeCntr % sizeof(int32_t) != 0);
+    EXPECT_FALSE(errorCallbackTriggered);
+
+    ASSERT_TRUE(this->mQueue->commitWrite(dataLen));
+    EXPECT_FALSE(errorCallbackTriggered);
+
+    // This next write will be misaligned and will overlap outside of the ring buffer.
+    // The write should fail.
+    EXPECT_FALSE(this->mQueue->write(data, dataLen));
+    EXPECT_TRUE(errorCallbackTriggered);
+
+    errorCallbackTriggered = false;
+    EXPECT_EQ(0, this->mQueue->availableToWrite());
+    EXPECT_TRUE(errorCallbackTriggered);
+
+    // Check that it is possible to reset the error handler.
+    errorCallbackTriggered = false;
+    this->mQueue->setErrorHandler(nullptr);
+    EXPECT_EQ(0, this->mQueue->availableToWrite());
+    EXPECT_FALSE(errorCallbackTriggered);
+}
+
+/*
  * Write a small number of messages to FMQ using the beginWrite()/CommitWrite()
  * APIs. Request mService to read and verify that the write was successful.
  */
@@ -789,7 +981,7 @@ TYPED_TEST(SynchronizedReadWriteClient, ReadWhenEmpty) {
  * to read and verify the messages in the FMQ.
  */
 TYPED_TEST(SynchronizedReadWriteClient, WriteWhenFull) {
-    std::array<int32_t, kNumElementsInSyncQueue> data = {0};
+    std::vector<int32_t> data(kNumElementsInSyncQueue, 0);
     initData(data.data(), data.size());
     ASSERT_TRUE(this->mQueue->write(data.data(), data.size()));
     ASSERT_EQ(0UL, this->mQueue->availableToWrite());
@@ -836,7 +1028,7 @@ TYPED_TEST(SynchronizedReadWriteClient, LargeInputTest2) {
  */
 
 TYPED_TEST(SynchronizedReadWriteClient, LargeInputTest3) {
-    std::array<int32_t, kNumElementsInSyncQueue> data = {0};
+    std::vector<int32_t> data(kNumElementsInSyncQueue, 0);
     initData(data.data(), data.size());
     ASSERT_TRUE(this->mQueue->write(data.data(), data.size()));
     ASSERT_EQ(0UL, this->mQueue->availableToWrite());
@@ -894,7 +1086,7 @@ TYPED_TEST(SynchronizedReadWriteClient, MultipleWrite) {
  */
 TYPED_TEST(SynchronizedReadWriteClient, ReadWriteWrapAround) {
     size_t numMessages = kNumElementsInSyncQueue / 2;
-    std::array<int32_t, kNumElementsInSyncQueue> data = {0};
+    std::vector<int32_t> data(kNumElementsInSyncQueue, 0);
     initData(data.data(), data.size());
     ASSERT_TRUE(this->mQueue->write(&data[0], numMessages));
     bool ret = this->requestReadFmqSync(numMessages);
@@ -914,7 +1106,7 @@ TYPED_TEST(SynchronizedReadWriteClient, ReadWriteWrapAround) {
  */
 TYPED_TEST(SynchronizedReadWriteClient, ReadWriteWrapAround2) {
     size_t numMessages = kNumElementsInSyncQueue / 2;
-    std::array<int32_t, kNumElementsInSyncQueue> data = {0};
+    std::vector<int32_t> data(kNumElementsInSyncQueue, 0);
     initData(data.data(), data.size());
     ASSERT_TRUE(this->mQueue->write(&data[0], numMessages));
     auto ret = this->requestReadFmqSync(numMessages);
@@ -960,11 +1152,8 @@ TYPED_TEST(UnsynchronizedWriteClient, SmallInputReaderTest1) {
 TYPED_TEST(UnsynchronizedWriteClient, SmallInputWriterTest1) {
     const size_t dataLen = 16;
     ASSERT_LE(dataLen, this->mNumMessagesMax);
-    int32_t data[dataLen];
-    initData(data, dataLen);
-    ASSERT_TRUE(this->mQueue->write(data, dataLen));
-    bool ret = this->requestReadFmqUnsync(dataLen, this->mService);
-    ASSERT_TRUE(ret);
+    ASSERT_TRUE(this->requestWriteFmqUnsync(dataLen, this->mService));
+    ASSERT_TRUE(this->requestReadFmqUnsync(dataLen, this->mService));
 }
 
 /*
@@ -990,9 +1179,9 @@ TYPED_TEST(UnsynchronizedWriteClient, ReadWhenEmpty) {
 TYPED_TEST(UnsynchronizedWriteClient, WriteWhenFull) {
     std::vector<int32_t> data(this->mNumMessagesMax);
     initData(&data[0], this->mNumMessagesMax);
-    ASSERT_TRUE(this->mQueue->write(&data[0], this->mNumMessagesMax));
+    ASSERT_TRUE(this->requestWriteFmqUnsync(this->mNumMessagesMax, this->mService));
     ASSERT_EQ(0UL, this->mQueue->availableToWrite());
-    ASSERT_TRUE(this->mQueue->write(&data[0], 1));
+    ASSERT_TRUE(this->requestWriteFmqUnsync(1, this->mService));
     bool ret = this->requestReadFmqUnsync(this->mNumMessagesMax, this->mService);
     ASSERT_FALSE(ret);
 }
@@ -1027,26 +1216,27 @@ TYPED_TEST(UnsynchronizedWriteClient, LargeInputTest2) {
 
 /*
  * Write until FMQ is full.
- * Verify that the number of messages available to write
- * is equal to this->mNumMessagesMax.
  * Verify that another write attempt is successful.
- * Request this->mService to read. Verify that read is unsuccessful.
+ * Request this->mService to read. Verify that read is unsuccessful
+ * because of the write overflow.
  * Perform another write and verify that the read is successful
  * to check if the reader process can recover from the error condition.
  */
 TYPED_TEST(UnsynchronizedWriteClient, LargeInputTest3) {
-    std::vector<int32_t> data(this->mNumMessagesMax);
-    initData(&data[0], this->mNumMessagesMax);
-    ASSERT_TRUE(this->mQueue->write(&data[0], this->mNumMessagesMax));
+    ASSERT_TRUE(this->requestWriteFmqUnsync(this->mNumMessagesMax, this->mService));
     ASSERT_EQ(0UL, this->mQueue->availableToWrite());
-    ASSERT_TRUE(this->mQueue->write(&data[0], 1));
 
-    bool ret = this->requestReadFmqUnsync(this->mNumMessagesMax, this->mService);
-    ASSERT_FALSE(ret);
-    ASSERT_TRUE(this->mQueue->write(&data[0], this->mNumMessagesMax));
+    int32_t readData;
+    ASSERT_TRUE(this->requestWriteFmqUnsync(1, this->mService));
 
-    ret = this->requestReadFmqUnsync(this->mNumMessagesMax, this->mService);
-    ASSERT_TRUE(ret);
+    ASSERT_FALSE(this->mQueue->read(&readData, 1));
+
+    // Half of the buffer gets cleared on overflow so single item write will not
+    // cause another overflow.
+    ASSERT_TRUE(this->requestWriteFmqUnsync(1, this->mService));
+
+    // Half of the buffer plus a newly written element will be available.
+    ASSERT_TRUE(this->mQueue->read(&readData, 1));
 }
 
 /*
@@ -1079,13 +1269,15 @@ TYPED_TEST(UnsynchronizedWriteClient, MultipleWrite) {
     const size_t chunkNum = 5;
     const size_t numMessages = chunkSize * chunkNum;
     ASSERT_LE(numMessages, this->mNumMessagesMax);
-    int32_t data[numMessages];
-    initData(data, numMessages);
     for (size_t i = 0; i < chunkNum; i++) {
-        ASSERT_TRUE(this->mQueue->write(data + i * chunkSize, chunkSize));
+        ASSERT_TRUE(this->requestWriteFmqUnsync(chunkSize, this->mService));
     }
-    bool ret = this->requestReadFmqUnsync(numMessages, this->mService);
-    ASSERT_TRUE(ret);
+    ASSERT_EQ(numMessages, this->mQueue->availableToRead());
+    int32_t readData[numMessages] = {};
+    ASSERT_TRUE(this->mQueue->read(readData, numMessages));
+    // verify that data is filled by the service - the messages will contiain
+    // 'chunkSize' because that's the value we passed to the service each write.
+    ASSERT_TRUE(verifyData(readData, chunkSize));
 }
 
 /*
@@ -1096,14 +1288,10 @@ TYPED_TEST(UnsynchronizedWriteClient, MultipleWrite) {
  */
 TYPED_TEST(UnsynchronizedWriteClient, ReadWriteWrapAround) {
     size_t numMessages = this->mNumMessagesMax / 2;
-    std::vector<int32_t> data(this->mNumMessagesMax);
-    initData(&data[0], this->mNumMessagesMax);
-    ASSERT_TRUE(this->mQueue->write(&data[0], numMessages));
-    bool ret = this->requestReadFmqUnsync(numMessages, this->mService);
-    ASSERT_TRUE(ret);
-    ASSERT_TRUE(this->mQueue->write(&data[0], this->mNumMessagesMax));
-    ret = this->requestReadFmqUnsync(this->mNumMessagesMax, this->mService);
-    ASSERT_TRUE(ret);
+    ASSERT_TRUE(this->requestWriteFmqUnsync(numMessages, this->mService));
+    ASSERT_TRUE(this->requestReadFmqUnsync(numMessages, this->mService));
+    ASSERT_TRUE(this->requestWriteFmqUnsync(this->mNumMessagesMax, this->mService));
+    ASSERT_TRUE(this->requestReadFmqUnsync(this->mNumMessagesMax, this->mService));
 }
 
 /*
