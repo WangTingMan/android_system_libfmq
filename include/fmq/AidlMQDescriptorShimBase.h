@@ -53,6 +53,31 @@ struct AidlMQDescriptorShimBase {
 
     ~AidlMQDescriptorShimBase();
 
+#ifdef _MSC_VER
+
+    std::string toString()const
+    {
+        std::string str;
+        str = ::system_porting::generate_string( mGrantors, mHandle, mQuantum, mFlags, mName );
+        return str;
+    }
+
+    void fromString( std::string const& a_decriptor_str )
+    {
+        ::system_porting::from_string( a_decriptor_str, mGrantors, mHandle, mQuantum, mFlags, mName );
+    }
+
+    void setName( std::string const& a_name )
+    {
+        mName = a_name;
+    }
+
+    std::string const& getName()const noexcept
+    {
+        return mName;
+    }
+#endif
+
     size_t getSize() const;
 
     size_t getQuantum() const;
@@ -78,6 +103,9 @@ struct AidlMQDescriptorShimBase {
     native_handle_t* mHandle = nullptr;
     uint32_t mQuantum = 0;
     uint32_t mFlags = 0;
+#ifdef _MSC_VER
+    std::string mName;
+#endif
 };
 
 template <typename T, MQFlavor flavor, typename BackendTypes>
@@ -87,6 +115,9 @@ AidlMQDescriptorShimBase<T, flavor, BackendTypes>::AidlMQDescriptorShimBase(
                                              SynchronizedReadWriteType,
                                              UnsynchronizedWriteType>::type>& desc)
     : mQuantum(desc.quantum), mFlags(desc.flags) {
+#ifdef _MSC_VER
+    fromString( desc.json_decriptor );
+#else
     if (desc.quantum < 0 || desc.flags < 0) {
         // MQDescriptor uses signed integers, but the values must be positive.
         hardware::details::logError("Invalid MQDescriptor. Values must be positive. quantum: " +
@@ -128,6 +159,7 @@ AidlMQDescriptorShimBase<T, flavor, BackendTypes>::AidlMQDescriptorShimBase(
         mHandle->data[data_index] = data_int;
         data_index++;
     }
+#endif
 }
 
 template <typename T, MQFlavor flavor, typename BackendTypes>
@@ -152,11 +184,19 @@ AidlMQDescriptorShimBase<T, flavor, BackendTypes>::operator=(
     mQuantum = other.mQuantum;
     mFlags = other.mFlags;
 
+#ifdef _MSC_VER
+    setName( other.getName() );
+#endif
+
     if (other.mHandle != nullptr) {
         mHandle = native_handle_create(other.mHandle->numFds, other.mHandle->numInts);
 
         for (int i = 0; i < other.mHandle->numFds; ++i) {
+#ifdef _MSC_VER
+            mHandle->data[i] = other.mHandle->data[i];
+#else
             mHandle->data[i] = dup(other.mHandle->data[i]);
+#endif
         }
 
         memcpy(&mHandle->data[other.mHandle->numFds], &other.mHandle->data[other.mHandle->numFds],

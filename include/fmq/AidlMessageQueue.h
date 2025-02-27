@@ -67,28 +67,27 @@ struct AidlMessageQueue final : public AidlMessageQueueBase<T, U, BackendTypesSt
      * Otherwise, operations will cause out-of-bounds memory access.
      */
     AidlMessageQueue(size_t numElementsInQueue, bool configureEventFlagWord,
+#ifdef _MSC_VER
+                     android::base::unique_fd bufferFd, size_t bufferSize, std::string name = "");
+#else
                      android::base::unique_fd bufferFd, size_t bufferSize);
+#endif
 
     AidlMessageQueue(size_t numElementsInQueue, bool configureEventFlagWord = false)
         : AidlMessageQueue(numElementsInQueue, configureEventFlagWord, android::base::unique_fd(),
                            0) {}
 
-<<<<<<< HEAD
 #ifdef _MSC_VER
-    AidlMessageQueue( size_t numElementsInQueue, std::string name, bool configureEventFlagWord )
-        : MessageQueueBase<AidlMQDescriptorShim, T, FlavorTypeToValue<U>::value>
-            ( numElementsInQueue, configureEventFlagWord, android::base::unique_fd(),
-              0, name ){}
+    AidlMessageQueue(size_t numElementsInQueue, std::string name, bool configureEventFlagWord = false)
+        : AidlMessageQueue(numElementsInQueue, configureEventFlagWord, android::base::unique_fd(),
+                           0, name) {}
 #endif
 
-    MQDescriptor<T, U> dupeDesc();
-=======
     template <typename V = T>
     AidlMessageQueue(size_t numElementsInQueue, bool configureEventFlagWord = false,
                      std::enable_if_t<std::is_same_v<V, MQErased>, size_t> quantum = sizeof(T))
         : AidlMessageQueue(numElementsInQueue, configureEventFlagWord, android::base::unique_fd(),
                            0, quantum) {}
->>>>>>> 208ef36
 
     template <typename V = T>
     AidlMessageQueue(size_t numElementsInQueue, bool configureEventFlagWord,
@@ -102,75 +101,22 @@ AidlMessageQueue<T, U>::AidlMessageQueue(const MQDescriptor<T, U>& desc, bool re
 
 template <typename T, typename U>
 AidlMessageQueue<T, U>::AidlMessageQueue(size_t numElementsInQueue, bool configureEventFlagWord,
+#ifdef _MSC_VER
+                                         android::base::unique_fd bufferFd, size_t bufferSize, std::string name)
+    : AidlMessageQueueBase<T, U, BackendTypesStore>(numElementsInQueue, configureEventFlagWord,
+                                                    std::move(bufferFd), bufferSize, name) {}
+#else
                                          android::base::unique_fd bufferFd, size_t bufferSize)
     : AidlMessageQueueBase<T, U, BackendTypesStore>(numElementsInQueue, configureEventFlagWord,
                                                     std::move(bufferFd), bufferSize) {}
+#endif
 
 template <typename T, typename U>
-<<<<<<< HEAD
-MQDescriptor<T, U> AidlMessageQueue<T, U>::dupeDesc() {
-    auto* shim = MessageQueueBase<AidlMQDescriptorShim, T, FlavorTypeToValue<U>::value>::getDesc();
-    if (shim) {
-        std::vector<aidl::android::hardware::common::fmq::GrantorDescriptor> grantors;
-        for (const auto& grantor : shim->grantors()) {
-            grantors.push_back(aidl::android::hardware::common::fmq::GrantorDescriptor{
-                    .fdIndex = static_cast<int32_t>(grantor.fdIndex),
-                    .offset = static_cast<int32_t>(grantor.offset),
-                    .extent = static_cast<int64_t>(grantor.extent)});
-        }
-        std::vector<ndk::ScopedFileDescriptor> fds;
-#ifdef _MSC_VER
-        std::vector<void*> ints;
-        std::string desc_json_ = shim->toString();
-#else
-        std::vector<int> ints;
-#endif
-        int data_index = 0;
-        for (; data_index < shim->handle()->numFds; data_index++) {
-#ifdef _MSC_VER
-            auto hd = shim->handle()->data[data_index];
-            int fake_fd = reinterpret_cast<int>( hd );
-            /* Warning this handle just create local process. Other process cannot use this handle to do anything*/
-            fds.push_back( ndk::ScopedFileDescriptor( fake_fd ) );
-#else
-            fds.push_back(ndk::ScopedFileDescriptor(dup(shim->handle()->data[data_index])));
-#endif
-        }
-        for (; data_index < shim->handle()->numFds + shim->handle()->numInts; data_index++) {
-            ints.push_back(shim->handle()->data[data_index]);
-        }
-
-#ifdef _MSC_VER
-        ::aidl::android::hardware::common::NativeHandle handle;
-        handle.fds = std::move( fds );
-        handle.ints.resize( ints.size() );
-
-        MQDescriptor<T, U> descriptor;
-        descriptor.grantors = grantors;
-        descriptor.handle = std::move( handle );
-        descriptor.quantum = static_cast<int32_t>( shim->getQuantum() );
-        descriptor.flags = static_cast<int32_t>( shim->getFlags() );
-        descriptor.json_decriptor = std::move( desc_json_ );
-        return descriptor;
-#else
-        return MQDescriptor<T, U>{
-                .quantum = static_cast<int32_t>(shim->getQuantum()),
-                .grantors = grantors,
-                .flags = static_cast<int32_t>(shim->getFlags()),
-                .handle = {std::move(fds), std::move(ints)},
-        };
-#endif
-    } else {
-        return MQDescriptor<T, U>();
-    }
-}
-=======
 template <typename V>
 AidlMessageQueue<T, U>::AidlMessageQueue(
         size_t numElementsInQueue, bool configureEventFlagWord, android::base::unique_fd bufferFd,
         size_t bufferSize, std::enable_if_t<std::is_same_v<V, MQErased>, size_t> quantum)
     : AidlMessageQueueBase<T, U, BackendTypesStore>(numElementsInQueue, configureEventFlagWord,
                                                     std::move(bufferFd), bufferSize, quantum) {}
->>>>>>> 208ef36
 
 }  // namespace android

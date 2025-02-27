@@ -88,8 +88,13 @@ struct AidlMessageQueueBase
      * size must be larger than or equal to (numElementsInQueue * sizeof(T)).
      * Otherwise, operations will cause out-of-bounds memory access.
      */
+#ifdef _MSC_VER
+    AidlMessageQueueBase(size_t numElementsInQueue, bool configureEventFlagWord,
+                         android::base::unique_fd bufferFd, size_t bufferSize, std::string name = "");
+#else
     AidlMessageQueueBase(size_t numElementsInQueue, bool configureEventFlagWord,
                          android::base::unique_fd bufferFd, size_t bufferSize);
+#endif
 
     AidlMessageQueueBase(size_t numElementsInQueue, bool configureEventFlagWord = false)
         : AidlMessageQueueBase(numElementsInQueue, configureEventFlagWord,
@@ -123,10 +128,19 @@ template <typename T, typename U, typename BackendTypes>
 AidlMessageQueueBase<T, U, BackendTypes>::AidlMessageQueueBase(size_t numElementsInQueue,
                                                                bool configureEventFlagWord,
                                                                android::base::unique_fd bufferFd,
+#ifdef _MSC_VER
+                                                               size_t bufferSize,
+                                                               std::string name
+                                                               )
+    : MessageQueueBase<BackendTypes::template AidlMQDescriptorShimType, T,
+                       FlavorTypeToValue<U>::value>(numElementsInQueue, configureEventFlagWord,
+                                                    std::move(bufferFd), bufferSize, name) {}
+#else
                                                                size_t bufferSize)
     : MessageQueueBase<BackendTypes::template AidlMQDescriptorShimType, T,
                        FlavorTypeToValue<U>::value>(numElementsInQueue, configureEventFlagWord,
                                                     std::move(bufferFd), bufferSize) {}
+#endif
 
 template <typename T, typename U, typename BackendTypes>
 template <typename V>
@@ -152,10 +166,22 @@ AidlMessageQueueBase<T, U, BackendTypes>::dupeDesc() const {
             grantors.push_back(gd);
         }
         std::vector<FileDescriptorType> fds;
+#ifdef _MSC_VER
+        std::vector<void*> ints;
+        std::string desc_json_ = shim->toString();
+#else
         std::vector<int> ints;
+#endif
         int data_index = 0;
         for (; data_index < shim->handle()->numFds; data_index++) {
+#ifdef _MSC_VER
+            auto hd = shim->handle()->data[data_index];
+            int fake_fd = reinterpret_cast<int>( hd );
+            /* Warning this handle just create local process. Other process cannot use this handle to do anything*/
+            fds.push_back( ndk::ScopedFileDescriptor( fake_fd ) );
+#else
             fds.push_back(BackendTypes::createFromInt(dup(shim->handle()->data[data_index])));
+#endif
         }
         for (; data_index < shim->handle()->numFds + shim->handle()->numInts; data_index++) {
             ints.push_back(shim->handle()->data[data_index]);
@@ -163,10 +189,20 @@ AidlMessageQueueBase<T, U, BackendTypes>::dupeDesc() const {
         typename BackendTypes::template MQDescriptorType<T, U> desc;
 
         desc.grantors = grantors;
+#ifndef _MSC_VER
         desc.handle.fds = std::move(fds);
         desc.handle.ints = ints;
+#endif
         desc.quantum = static_cast<int32_t>(shim->getQuantum());
         desc.flags = static_cast<int32_t>(shim->getFlags());
+
+#ifdef _MSC_VER
+        ::aidl::android::hardware::common::NativeHandle handle;
+        handle.fds = std::move( fds );
+        handle.ints.resize( ints.size() );
+        desc.handle = std::move( handle );
+        desc.json_decriptor = std::move( desc_json_ );
+#endif
         return desc;
     } else {
         return typename BackendTypes::template MQDescriptorType<T, U>();

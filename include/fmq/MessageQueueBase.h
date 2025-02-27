@@ -23,16 +23,14 @@
 #include <utils/SystemClock.h>
 #include <cutils/native_handle.h>
 #include <atomic>
-<<<<<<< HEAD
 #include <new>
 #include <memory>
 #include <vector>
 #include <fmq/MQDescriptorBase.h>
 
 #include <fmq/system_porting.h>
-=======
+
 #include <functional>
->>>>>>> 208ef36
 
 using android::hardware::kSynchronizedReadWrite;
 using android::hardware::kUnsynchronizedWrite;
@@ -107,14 +105,17 @@ struct MessageQueueBase {
      /**
       * we just need a name to create one shared memory on windows.
       */
-    MessageQueueBase( size_t numElementsInQueue, bool configureEventFlagWord,
-                      android::base::unique_fd bufferFd, size_t bufferSize, std::string name = "" );
+    MessageQueueBase(size_t numElementsInQueue, bool configureEventFlagWord,
+                     android::base::unique_fd bufferFd, size_t bufferSize, std::string name = "" )
+        : MessageQueueBase(numElementsInQueue, configureEventFlagWord, std::move(bufferFd),
+                           bufferSize, sizeof(T), name) {
+        /* We must not pass sizeof(T) as quantum for MQErased element type. */
+        static_assert(!std::is_same_v<T, MQErased>,
+                      "MessageQueueBase<..., MQErased, ...> must be constructed via a"
+                      " constructor that accepts a descriptor or a quantum size");
+    }
 #else
     MessageQueueBase(size_t numElementsInQueue, bool configureEventFlagWord,
-<<<<<<< HEAD
-                     android::base::unique_fd bufferFd, size_t bufferSize);
-#endif
-=======
                      android::base::unique_fd bufferFd, size_t bufferSize)
         : MessageQueueBase(numElementsInQueue, configureEventFlagWord, std::move(bufferFd),
                            bufferSize, sizeof(T)) {
@@ -123,7 +124,7 @@ struct MessageQueueBase {
                       "MessageQueueBase<..., MQErased, ...> must be constructed via a"
                       " constructor that accepts a descriptor or a quantum size");
     };
->>>>>>> 208ef36
+#endif
 
     MessageQueueBase(size_t numElementsInQueue, bool configureEventFlagWord = false)
         : MessageQueueBase(numElementsInQueue, configureEventFlagWord, android::base::unique_fd(),
@@ -511,9 +512,16 @@ struct MessageQueueBase {
      * @param quantum Size of the element type, in bytes.
      * Other parameters have semantics given in the corresponding public ctor.
      */
-
+#ifdef _MSC_VER
+     /**
+      * we just need a name to create one shared memory on windows.
+      */
+    MessageQueueBase(size_t numElementsInQueue, bool configureEventFlagWord,
+                     android::base::unique_fd bufferFd, size_t bufferSize, size_t quantum, std::string name = "");
+#else
     MessageQueueBase(size_t numElementsInQueue, bool configureEventFlagWord,
                      android::base::unique_fd bufferFd, size_t bufferSize, size_t quantum);
+#endif
 
   private:
     template <class U = T,
@@ -556,8 +564,11 @@ struct MessageQueueBase {
     android::hardware::EventFlag* mEventFlag = nullptr;
 
     ErrorHandler mErrorHandler;
-
+#ifdef _MSC_VER
+    const size_t kPageSize = PAGE_SIZE; // not sure how many this. just set it as 4096
+#else
     const size_t kPageSize = getpagesize();
+#endif
 };
 
 template <template <typename, MQFlavor> typename MQDescriptorType, typename T, MQFlavor flavor>
@@ -790,16 +801,11 @@ template <template <typename, MQFlavor> typename MQDescriptorType, typename T, M
 MessageQueueBase<MQDescriptorType, T, flavor>::MessageQueueBase(size_t numElementsInQueue,
                                                                 bool configureEventFlagWord,
                                                                 android::base::unique_fd bufferFd,
-<<<<<<< HEAD
 #ifdef _MSC_VER
-                                                                size_t bufferSize,
-                                                                std::string name) {
+                                                                size_t bufferSize, size_t quantum, std::string name) {
 #else
-                                                                size_t bufferSize) {
-#endif
-=======
                                                                 size_t bufferSize, size_t quantum) {
->>>>>>> 208ef36
+#endif
     // Check if the buffer size would not overflow size_t
     if (numElementsInQueue > SIZE_MAX / quantum) {
         hardware::details::logError("Requested message queue size too large. Size of elements: " +
@@ -916,14 +922,10 @@ MessageQueueBase<MQDescriptorType, T, flavor>::MessageQueueBase(size_t numElemen
                                                     Descriptor(grantors, mqHandle, quantum));
     } else {
         mDesc = std::unique_ptr<Descriptor>(new (std::nothrow) Descriptor(
-<<<<<<< HEAD
-                kQueueSizeBytes, mqHandle, sizeof(T), configureEventFlagWord));
+                kQueueSizeBytes, mqHandle, quantum, configureEventFlagWord));
 #ifdef _MSC_VER
         mDesc->setName( name );
 #endif
-=======
-                kQueueSizeBytes, mqHandle, quantum, configureEventFlagWord));
->>>>>>> 208ef36
     }
     if (mDesc == nullptr) {
         native_handle_close(mqHandle);
@@ -1052,7 +1054,7 @@ bool MessageQueueBase<MQDescriptorType, T, flavor>::writeBlocking(
         status_t status = evFlag->wait(readNotification, &efState, timeOutNanos,
                                        true /* retry on spurious wake */);
 
-        if (status != android::TIMED_OUT && status != android::ANDROID_NO_ERROR ) {
+        if (status != android::TIMED_OUT && status != android::OK ) {
             hardware::details::logError("Unexpected error code from EventFlag Wait status " +
                                         std::to_string(status));
             break;
@@ -1169,7 +1171,7 @@ bool MessageQueueBase<MQDescriptorType, T, flavor>::readBlocking(
         status_t status = evFlag->wait(writeNotification, &efState, timeOutNanos,
                                        true /* retry on spurious wake */);
 
-        if (status != android::TIMED_OUT && status != android::ANDROID_NO_ERROR ) {
+        if (status != android::TIMED_OUT && status != android::OK ) {
             hardware::details::logError("Unexpected error code from EventFlag Wait status " +
                                         std::to_string(status));
             break;
@@ -1346,7 +1348,7 @@ template <template <typename, MQFlavor> typename MQDescriptorType, typename T, M
  * Disable integer sanitization since integer overflow here is allowed
  * and legal.
  */
-__attribute__((no_sanitize("integer"))) bool
+/*__attribute__((no_sanitize("integer")))*/ bool
 MessageQueueBase<MQDescriptorType, T, flavor>::processOverflow(uint64_t readPtr,
                                                                uint64_t writePtr) const {
     if (writePtr - readPtr > mDesc->getSize()) {
@@ -1546,7 +1548,11 @@ void* MessageQueueBase<MQDescriptorType, T, flavor>::mapGrantorDescr(uint32_t gr
         // Try again to mmap read-only for the kUnsynchronizedWrite case.
         // kSynchronizedReadWrite cannot use read-only memory because the
         // read pointer is stored in the shared memory as well.
+#ifdef _MSC_VER
+        address = system_porting::system_porting_mmap( 0, mapLength, PROT_READ, MAP_SHARED, handle->data[fdIndex], mapOffset );
+#else
         address = mmap(0, mapLength, PROT_READ, MAP_SHARED, handle->data[fdIndex], mapOffset);
+#endif
     }
     if (address == MAP_FAILED) {
         hardware::details::logError(std::string("mmap failed: ") + std::to_string(errno));
