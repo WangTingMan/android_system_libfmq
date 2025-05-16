@@ -8,6 +8,8 @@ namespace hardware {
 namespace common {
 const char* Ashmem::descriptor = "android.hardware.common.Ashmem";
 
+Ashmem::Ashmem(){}
+
 binder_status_t Ashmem::readFromParcel(const AParcel* _aidl_parcel) {
   binder_status_t _aidl_ret_status = STATUS_OK;
   int32_t _aidl_start_pos = AParcel_getDataPosition(_aidl_parcel);

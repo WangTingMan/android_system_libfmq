@@ -25,8 +25,11 @@ public:
 
   ::ndk::ScopedFileDescriptor fd;
   int64_t size = 0L;
+  Ashmem();
+#ifndef _MSC_VER
   Ashmem(Ashmem const&) = delete;
   Ashmem& operator=(Ashmem const&) = delete;
+#endif
 
   binder_status_t readFromParcel(const AParcel* parcel);
   binder_status_t writeToParcel(AParcel* parcel) const;

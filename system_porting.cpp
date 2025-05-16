@@ -418,7 +418,7 @@ std::string generate_random_name()
 {
     std::string name{"random_message_queue_name_"};
     int rand = base::RandInt(0, 10000);
-    //name.append(std::to_string(rand));
+    name.append(std::to_string(rand));
     return name;
 }
 
