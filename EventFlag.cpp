@@ -22,6 +22,7 @@
 #ifdef _MSC_VER
 #include <windows.h>
 #include <fmq/system_porting.h>
+#include <thread>
 #else
 #include <linux/futex.h>
 #include <sys/mman.h>
@@ -147,7 +148,8 @@ status_t EventFlag::waitHelper(uint32_t bitmask, uint32_t* efState, int64_t time
         addNanosecondsToCurrentTime(timeoutNanoSeconds, &waitTimeAbsolute);
 #ifdef _MSC_VER
         ret = 0;
-        ALOGE( "FAKE INVOKE in WINDOWS!" );
+        ALOGE("FAKE INVOKE in WINDOWS!");
+        std::this_thread::sleep_for(std::chrono::milliseconds(20)); // To remove this if we have a windows implementation.
 #else
         ret = syscall(__NR_futex, mEfWordPtr, FUTEX_WAIT_BITSET,
                       efWord, &waitTimeAbsolute, NULL, bitmask);
@@ -156,6 +158,7 @@ status_t EventFlag::waitHelper(uint32_t bitmask, uint32_t* efState, int64_t time
 #ifdef _MSC_VER
         ret = 0;
         ALOGE( "FAKE INVOKE in WINDOWS!" );
+        std::this_thread::sleep_for(std::chrono::milliseconds(20)); // To remove this if we have a windows implementation.
 #else
         ret = syscall(__NR_futex, mEfWordPtr, FUTEX_WAIT_BITSET, efWord, NULL, NULL, bitmask);
 #endif
