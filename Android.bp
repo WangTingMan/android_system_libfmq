@@ -55,6 +55,12 @@ cc_library {
     double_loadable: true,
     min_sdk_version: "29",
     host_supported: true,
+
+    // b/336916369: This library gets linked into a rust rlib.  Disable LTO
+    // until cross-language lto is supported.
+    lto: {
+        never: true,
+    },
 }
 
 // Header only lib to share type between HIDL and AIDL MQDescriptor
@@ -93,6 +99,12 @@ cc_library {
     product_available: true,
     min_sdk_version: "29",
     host_supported: true,
+
+    // b/336916369: This library gets linked into a rust rlib.  Disable LTO
+    // until cross-language lto is supported.
+    lto: {
+        never: true,
+    },
 }
 
 rust_bindgen {
@@ -154,15 +166,15 @@ rust_bindgen {
         "android.hardware.common.fmq-V1-rust",
         "android.hardware.common-V2-rust",
     ],
-    static_libs: [
-        "libfmq",
-    ],
     whole_static_libs: [
+        "libfmq",
         "libfmq_erased",
     ],
     shared_libs: [
         "libc++",
         "liblog",
+        "libbase",
+        "libutils",
         "android.hardware.common.fmq-V1-ndk",
     ],
     apex_available: [
@@ -192,6 +204,7 @@ rust_defaults {
     visibility: [
         ":__subpackages__",
         "//system/software_defined_vehicle/core_services/sdv_comms:__subpackages__",
+        "//vendor:__subpackages__",
     ],
     crate_name: "fmq",
     srcs: ["libfmq.rs"],
